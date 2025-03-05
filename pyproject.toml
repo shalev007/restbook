@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "restbook"
+version = "0.1.0"
+description = "simple rest api for testing"
+authors = ["Shalev Avhar <shalev1994avhar@gmail.com>"]
+packages = [
+    { include = "src" }
+]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+click = "^8.1.8"
+pyyaml = "^6.0.2"
+types-pyyaml = "^6.0.12.20241230"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+restbook = "src.main:main"
