@@ -1,4 +1,6 @@
 import click
+import requests
+import json
 from src.models.session.session_store import SessionStore
 
 # Instantiate the session store (this could be injected for tests)
@@ -57,6 +59,66 @@ def delete(name):
         click.echo(f"Session '{name}' deleted successfully.")
     except ValueError as err:
         click.echo(str(err), err=True)
+
+@cli.command()
+@click.argument("session_name")
+@click.argument("method", type=click.Choice(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']))
+@click.argument("endpoint")
+@click.option("--data", help="JSON data to send with the request")
+@click.option("--headers", help="Additional headers in JSON format")
+def request(session_name, method, endpoint, data, headers):
+    """Make an HTTP request using a specified session."""
+    try:
+        # Get the session
+        sessions = session_store.list_sessions()
+        if session_name not in sessions:
+            raise ValueError(f"Session '{session_name}' does not exist.")
+        session = sessions[session_name]
+
+        # Prepare the request
+        url = f"{session.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+        
+        # Prepare headers
+        request_headers = {}
+        if session.token:
+            request_headers['Authorization'] = f"Bearer {session.token}"
+        if headers:
+            try:
+                request_headers.update(json.loads(headers))
+            except json.JSONDecodeError:
+                raise ValueError("Headers must be in valid JSON format")
+
+        # Prepare data
+        request_data = None
+        if data:
+            try:
+                request_data = json.loads(data)
+            except json.JSONDecodeError:
+                raise ValueError("Data must be in valid JSON format")
+
+        # Make the request
+        response = requests.request(
+            method=method,
+            url=url,
+            headers=request_headers,
+            json=request_data
+        )
+
+        # Print response
+        click.echo(f"Status: {response.status_code}")
+        click.echo("Headers:")
+        for key, value in response.headers.items():
+            click.echo(f"  {key}: {value}")
+        click.echo("\nBody:")
+        try:
+            click.echo(json.dumps(response.json(), indent=2))
+        except:
+            click.echo(response.text)
+
+    except ValueError as err:
+        click.echo(str(err), err=True)
+    except requests.exceptions.RequestException as err:
+        click.echo(f"Request failed: {str(err)}", err=True)
 
 def main():
     cli()
