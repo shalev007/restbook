@@ -1,9 +1,7 @@
 import click
 import requests
 import json
-import sys
 from src.models.session.session_store import SessionStore
-from src.models.playbook.playbook import Playbook
 
 # Instantiate the session store (this could be injected for tests)
 session_store = SessionStore()
@@ -116,67 +114,6 @@ def request(session_name, method, endpoint, data, headers):
             click.echo(json.dumps(response.json(), indent=2))
         except:
             click.echo(response.text)
-
-    except ValueError as err:
-        click.echo(str(err), err=True)
-    except requests.exceptions.RequestException as err:
-        click.echo(f"Request failed: {str(err)}", err=True)
-
-@cli.command()
-@click.argument('playbook_file', type=click.File('r'), required=False)
-def run(playbook_file):
-    """Execute a YAML playbook from a file or stdin.
-    
-    If no file is specified, reads from stdin.
-    """
-    try:
-        # Read from file or stdin
-        if playbook_file is None:
-            if sys.stdin.isatty():
-                raise click.UsageError("Please provide a playbook file or pipe YAML content")
-            content = sys.stdin.read()
-        else:
-            content = playbook_file.read()
-
-        # Parse the playbook
-        playbook = Playbook.from_yaml(content)
-        
-        # Validate session exists
-        sessions = session_store.list_sessions()
-        if playbook.session_name not in sessions:
-            raise ValueError(f"Session '{playbook.session_name}' does not exist")
-        session = sessions[playbook.session_name]
-
-        # Execute each step
-        for i, step in enumerate(playbook.steps, 1):
-            click.echo(f"\nExecuting step {i}...")
-            
-            # Prepare request
-            url = f"{session.base_url.rstrip('/')}/{step.endpoint.lstrip('/')}"
-            headers = {}
-            if session.token:
-                headers['Authorization'] = f"Bearer {session.token}"
-            if step.headers:
-                headers.update(step.headers)
-
-            # Make request
-            response = requests.request(
-                method=step.method,
-                url=url,
-                headers=headers,
-                json=step.data
-            )
-
-            # Print response
-            click.echo(f"Status: {response.status_code}")
-            click.echo("Headers:")
-            for key, value in response.headers.items():
-                click.echo(f"  {key}: {value}")
-            click.echo("\nBody:")
-            try:
-                click.echo(json.dumps(response.json(), indent=2))
-            except:
-                click.echo(response.text)
 
     except ValueError as err:
         click.echo(str(err), err=True)
