@@ -29,7 +29,7 @@ class SessionStore:
         with open(self.file_path, "w") as f:
             yaml.dump(data, f)
 
-    def create_session(self, name, base_url, token):
+    def create_session(self, name: str, base_url: str, token: str | None = None):
         """Create a new session and persist it."""
         if name in self.name_to_id:
             raise ValueError(f"Session '{name}' already exists.")
