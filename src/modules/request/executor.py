@@ -1,58 +1,78 @@
 import json
 import requests
 from typing import Optional, Dict, Any
+from urllib3.util.retry import Retry
+from requests.adapters import HTTPAdapter
+
+from src.modules.session.session import Session
 from ..logging import BaseLogger
-from ..session.session_store import SessionStore
 
 
 class RequestExecutor:
     """Handles HTTP request execution and response processing."""
     
-    def __init__(self, session_store: SessionStore, logger: BaseLogger):
-        self.session_store = session_store
-        self.logger = logger
-
-    def execute_request(
+    def __init__(
         self,
-        session_name: str,
+        base_url: str,
+        session: Session,
+        logger: BaseLogger,
+        timeout: int = 30,
+        verify_ssl: bool = True,
+        max_retries: int = 3,
+        backoff_factor: float = 0.5
+    ):
+        self.base_url = base_url
+        self.auth_session = session
+        self.logger = logger
+        self.timeout = timeout
+        self.verify_ssl = verify_ssl
+        self.max_retries = max_retries
+        self.backoff_factor = backoff_factor
+        
+        # Configure session with retry strategy
+        self.session = requests.Session()
+        retry_strategy = Retry(
+            total=max_retries,
+            backoff_factor=backoff_factor,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+
+    async def execute_request(
+        self,
         method: str,
         endpoint: str,
         data: Optional[str] = None,
         headers: Optional[str] = None
     ) -> None:
-        """Execute an HTTP request using the specified session.
+        """Execute an HTTP request.
         
         Args:
-            session_name: Name of the session to use
             method: HTTP method (GET, POST, etc.)
             endpoint: API endpoint path
             data: Optional JSON data to send with the request
             headers: Optional JSON string of additional headers
         """
         try:
-            # Get the session
-            sessions = self.session_store.list_sessions()
-            if session_name not in sessions:
-                error_msg = f"Session '{session_name}' does not exist."
-                self.logger.log_error(error_msg)
-                raise ValueError(error_msg)
-            session = sessions[session_name]
-
             # Prepare the request
-            url = f"{session.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+            url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
             
             # Prepare headers
-            request_headers = self._prepare_headers(session.token, headers)
+            request_headers = self._prepare_headers(headers)
             
             # Prepare data
             request_data = self._prepare_data(data)
 
             # Make the request
-            response = requests.request(
+            response = self.session.request(
                 method=method,
                 url=url,
                 headers=request_headers,
-                json=request_data
+                json=request_data,
+                timeout=self.timeout,
+                verify=self.verify_ssl
             )
 
             # Log response
@@ -63,11 +83,11 @@ class RequestExecutor:
         except requests.exceptions.RequestException as err:
             self.logger.log_error(f"Request failed: {str(err)}")
 
-    def _prepare_headers(self, token: Optional[str], headers: Optional[str]) -> Dict[str, str]:
+    def _prepare_headers(self, headers: Optional[str]) -> Dict[str, str]:
         """Prepare request headers."""
         request_headers = {}
-        if token:
-            request_headers['Authorization'] = f"Bearer {token}"
+        if self.auth_session.token:
+            request_headers['Authorization'] = f"Bearer {self.auth_session.token}"
         if headers:
             try:
                 request_headers.update(json.loads(headers))
