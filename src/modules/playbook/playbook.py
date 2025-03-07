@@ -124,7 +124,6 @@ class Playbook:
     async def _log_response(self, step_number: int, response: aiohttp.ClientResponse) -> None:
         """Log the response for a step."""
         self.logger.log_status(response.status)
-        self.logger.log_headers(dict(response.headers))
         try:
             body = await response.json()
             body_str = json.dumps(body, indent=2)
