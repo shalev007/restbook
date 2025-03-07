@@ -1,33 +1,34 @@
-from typing import Dict, Any, Callable
+from typing import Dict, Any
 import requests
 import json
 from .config import PlaybookConfig
 from .validator import PlaybookYamlValidator
 from ..session.session_store import SessionStore
+from src.utils.logging import BaseLogger
 
 
 class Playbook:
     """Represents a playbook that can be executed."""
     
-    def __init__(self, config: PlaybookConfig, logger: Callable[[str], None] | None = None):
+    def __init__(self, config: PlaybookConfig, logger: BaseLogger | None = None):
         """
         Initialize a playbook with a configuration.
         
         Args:
             config: The playbook configuration
-            logger: Optional callback function for logging (e.g., click.echo)
+            logger: Optional logger instance
         """
         self.config = config
-        self.logger = logger or (lambda msg: None)
+        self.logger = logger
 
     @classmethod
-    def from_yaml(cls, yaml_content: str, logger: Callable[[str], None] | None = None) -> 'Playbook':
+    def from_yaml(cls, yaml_content: str, logger: BaseLogger | None = None) -> 'Playbook':
         """
         Create a Playbook instance from YAML content.
         
         Args:
             yaml_content: The YAML content to parse
-            logger: Optional callback function for logging
+            logger: Optional logger instance
             
         Returns:
             Playbook: A new playbook instance
@@ -65,16 +66,17 @@ class Playbook:
 
     def _log_response(self, step_number: int, response: requests.Response):
         """Log a response with its details."""
-        self.logger(f"\nStep {step_number} Response:")
-        self.logger(f"Status: {response.status_code}")
-        self.logger("Headers:")
-        for key, value in response.headers.items():
-            self.logger(f"  {key}: {value}")
-        self.logger("\nBody:")
+        if not self.logger:
+            return
+            
+        self.logger.log_status(response.status_code)
+        self.logger.log_headers(dict(response.headers))
+        
         try:
-            self.logger(json.dumps(response.json(), indent=2))
+            body = json.dumps(response.json(), indent=2)
         except:
-            self.logger(response.text)
+            body = response.text
+        self.logger.log_body(body)
 
     def execute(self, session_store: SessionStore) -> list[requests.Response]:
         """
@@ -93,13 +95,17 @@ class Playbook:
         # Validate session exists
         sessions = session_store.list_sessions()
         if self.session_name not in sessions:
-            raise ValueError(f"Session '{self.session_name}' does not exist")
+            error_msg = f"Session '{self.session_name}' does not exist"
+            if self.logger:
+                self.logger.log_error(error_msg)
+            raise ValueError(error_msg)
         session = sessions[self.session_name]
 
         responses = []
         # Execute each step
         for i, step in enumerate(self.steps, 1):
-            self.logger(f"\nExecuting step {i}...")
+            if self.logger:
+                self.logger.log_step(i, step.method, step.endpoint)
             
             # Prepare request
             url = f"{session.base_url.rstrip('/')}/{step.endpoint.lstrip('/')}"
