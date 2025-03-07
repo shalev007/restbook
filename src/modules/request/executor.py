@@ -1,11 +1,10 @@
 import json
-import requests
-from typing import Optional, Dict, Any
-from urllib3.util.retry import Retry
-from requests.adapters import HTTPAdapter
-
-from src.modules.session.session import Session
+import asyncio
+import aiohttp
+from typing import Optional, Dict, Any, NoReturn
+from aiohttp import ClientTimeout
 from ..logging import BaseLogger
+from ..session.session import Session
 
 
 class RequestExecutor:
@@ -13,32 +12,33 @@ class RequestExecutor:
     
     def __init__(
         self,
-        base_url: str,
         session: Session,
-        logger: BaseLogger,
         timeout: int = 30,
         verify_ssl: bool = True,
         max_retries: int = 3,
         backoff_factor: float = 0.5
     ):
-        self.base_url = base_url
-        self.auth_session = session
-        self.logger = logger
+        """Initialize the request executor.
+        
+        Args:
+            session: Session object containing base URL and authentication details
+            timeout: Request timeout in seconds
+            verify_ssl: Whether to verify SSL certificates
+            max_retries: Maximum number of retries for failed requests
+            backoff_factor: Backoff factor between retries
+        """
+        self.session = session
         self.timeout = timeout
         self.verify_ssl = verify_ssl
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
         
-        # Configure session with retry strategy
-        self.session = requests.Session()
-        retry_strategy = Retry(
-            total=max_retries,
-            backoff_factor=backoff_factor,
-            status_forcelist=[429, 500, 502, 503, 504],
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
+        # Configure timeout
+        self.client_timeout = ClientTimeout(total=timeout)
+
+    def _raise_error(self, err: Exception) -> NoReturn:
+        """Helper method to raise errors."""
+        raise err
 
     async def execute_request(
         self,
@@ -46,18 +46,25 @@ class RequestExecutor:
         endpoint: str,
         data: Optional[str] = None,
         headers: Optional[str] = None
-    ) -> None:
-        """Execute an HTTP request.
+    ) -> aiohttp.ClientResponse:
+        """Execute an HTTP request asynchronously.
         
         Args:
             method: HTTP method (GET, POST, etc.)
             endpoint: API endpoint path
             data: Optional JSON data to send with the request
             headers: Optional JSON string of additional headers
+            
+        Returns:
+            aiohttp.ClientResponse: The response from the server
+            
+        Raises:
+            ValueError: If the headers or data are invalid JSON
+            aiohttp.ClientError: If the request fails
         """
         try:
             # Prepare the request
-            url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+            url = f"{self.session.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
             
             # Prepare headers
             request_headers = self._prepare_headers(headers)
@@ -65,36 +72,55 @@ class RequestExecutor:
             # Prepare data
             request_data = self._prepare_data(data)
 
-            # Make the request
-            response = self.session.request(
-                method=method,
-                url=url,
-                headers=request_headers,
-                json=request_data,
-                timeout=self.timeout,
-                verify=self.verify_ssl
-            )
+            # Create client session with retry logic
+            async with aiohttp.ClientSession(
+                timeout=self.client_timeout,
+                headers=request_headers
+            ) as client:
+                for attempt in range(self.max_retries + 1):
+                    try:
+                        # Make the request
+                        async with client.request(
+                            method=method,
+                            url=url,
+                            json=request_data,
+                            ssl=self.verify_ssl
+                        ) as response:
+                            # Wait for the response body to be fully received
+                            await response.read()
+                            
+                            # Check if we should retry
+                            if response.status in [429, 500, 502, 503, 504] and attempt < self.max_retries:
+                                delay = self.backoff_factor * (2 ** attempt)
+                                await asyncio.sleep(delay)
+                                continue
+                            
+                            return response
+                            
+                    except aiohttp.ClientError as err:
+                        if attempt < self.max_retries:
+                            delay = self.backoff_factor * (2 ** attempt)
+                            await asyncio.sleep(delay)
+                            continue
+                        return self._raise_error(err)
 
-            # Log response
-            self._log_response(response)
+                return self._raise_error(aiohttp.ClientError("Max retries exceeded"))
 
         except ValueError as err:
-            self.logger.log_error(str(err))
-        except requests.exceptions.RequestException as err:
-            self.logger.log_error(f"Request failed: {str(err)}")
+            return self._raise_error(err)
+        except aiohttp.ClientError as err:
+            return self._raise_error(err)
 
     def _prepare_headers(self, headers: Optional[str]) -> Dict[str, str]:
         """Prepare request headers."""
         request_headers = {}
-        if self.auth_session.token:
-            request_headers['Authorization'] = f"Bearer {self.auth_session.token}"
+        if self.session.token:
+            request_headers['Authorization'] = f"Bearer {self.session.token}"
         if headers:
             try:
                 request_headers.update(json.loads(headers))
             except json.JSONDecodeError:
-                error_msg = "Headers must be in valid JSON format"
-                self.logger.log_error(error_msg)
-                raise ValueError(error_msg)
+                raise ValueError("Headers must be in valid JSON format")
         return request_headers
 
     def _prepare_data(self, data: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -104,16 +130,4 @@ class RequestExecutor:
         try:
             return json.loads(data)
         except json.JSONDecodeError:
-            error_msg = "Data must be in valid JSON format"
-            self.logger.log_error(error_msg)
-            raise ValueError(error_msg)
-
-    def _log_response(self, response: requests.Response) -> None:
-        """Log the response details."""
-        self.logger.log_status(response.status_code)
-        self.logger.log_headers(dict(response.headers))
-        try:
-            body = json.dumps(response.json(), indent=2)
-        except:
-            body = response.text
-        self.logger.log_body(body) 
+            raise ValueError("Data must be in valid JSON format") 

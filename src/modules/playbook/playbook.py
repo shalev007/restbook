@@ -1,34 +1,36 @@
-from typing import Dict, Any
-import requests
+from typing import Dict, Any, Optional, List
+import asyncio
+import aiohttp
 import json
-from .config import PlaybookConfig
+from .config import PlaybookConfig, PlaybookStep
 from .validator import PlaybookYamlValidator
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
+from ..request.executor import RequestExecutor
 
 
 class Playbook:
     """Represents a playbook that can be executed."""
     
-    def __init__(self, config: PlaybookConfig, logger: BaseLogger | None = None):
+    def __init__(self, config: PlaybookConfig, logger: BaseLogger):
         """
         Initialize a playbook with a configuration.
         
         Args:
             config: The playbook configuration
-            logger: Optional logger instance
+            logger: Logger instance for request/response logging
         """
         self.config = config
         self.logger = logger
 
     @classmethod
-    def from_yaml(cls, yaml_content: str, logger: BaseLogger | None = None) -> 'Playbook':
+    def from_yaml(cls, yaml_content: str, logger: BaseLogger) -> 'Playbook':
         """
         Create a Playbook instance from YAML content.
         
         Args:
             yaml_content: The YAML content to parse
-            logger: Optional logger instance
+            logger: Logger instance for request/response logging
             
         Returns:
             Playbook: A new playbook instance
@@ -45,14 +47,14 @@ class Playbook:
         return self.config.session_name
 
     @property
-    def steps(self) -> list:
+    def steps(self) -> List[PlaybookStep]:
         """Get the playbook steps."""
         return self.config.steps
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert the Playbook to a dictionary."""
+        """Convert the playbook to a dictionary."""
         return {
-            "session": self.session_name,
+            "session_name": self.session_name,
             "steps": [
                 {
                     "method": step.method,
@@ -64,67 +66,68 @@ class Playbook:
             ]
         }
 
-    def _log_response(self, step_number: int, response: requests.Response):
-        """Log a response with its details."""
-        if not self.logger:
-            return
-            
-        self.logger.log_status(response.status_code)
-        self.logger.log_headers(dict(response.headers))
-        
-        try:
-            body = json.dumps(response.json(), indent=2)
-        except:
-            body = response.text
-        self.logger.log_body(body)
-
-    async def execute(self, session_store: SessionStore) -> list[requests.Response]:
+    async def execute(self, session_store: SessionStore) -> None:
         """
         Execute the playbook using the provided session store.
         
         Args:
             session_store: The session store to use for execution
             
-        Returns:
-            list[requests.Response]: List of responses from each step
-            
         Raises:
             ValueError: If the session does not exist
-            requests.exceptions.RequestException: If any request fails
+            aiohttp.ClientError: If any request fails
         """
-        # Validate session exists
-        sessions = session_store.list_sessions()
-        if self.session_name not in sessions:
-            error_msg = f"Session '{self.session_name}' does not exist"
-            if self.logger:
+        try:
+            # Validate session exists
+            sessions = session_store.list_sessions()
+            if self.session_name not in sessions:
+                error_msg = f"Session '{self.session_name}' does not exist"
                 self.logger.log_error(error_msg)
-            raise ValueError(error_msg)
-        session = sessions[self.session_name]
+                raise ValueError(error_msg)
+            session = sessions[self.session_name]
 
-        responses = []
-        # Execute each step
-        for i, step in enumerate(self.steps, 1):
-            if self.logger:
-                self.logger.log_step(i, step.method, step.endpoint)
-            
-            # Prepare request
-            url = f"{session.base_url.rstrip('/')}/{step.endpoint.lstrip('/')}"
-            headers = {}
-            if session.token:
-                headers['Authorization'] = f"Bearer {session.token}"
-            if step.headers:
-                headers.update(step.headers)
-
-            # Make request
-            response = requests.request(
-                method=step.method,
-                url=url,
-                headers=headers,
-                json=step.data
+            # Create request executor for this playbook execution
+            executor = RequestExecutor(
+                session=session,
+                # Use default values for timeout, verify_ssl, max_retries, and backoff_factor
             )
-            responses.append(response)
-            
-            # Log response immediately
-            self._log_response(i, response)
 
-        return responses 
+            responses: List[aiohttp.ClientResponse] = []
+            # Execute each step
+            for i, step in enumerate(self.steps, 1):
+                self.logger.log_step(i, step.method, step.endpoint)
+                
+                try:
+                    # Convert step headers to JSON string if present
+                    headers_str = json.dumps(step.headers) if step.headers else None
+                    # Convert step data to JSON string if present
+                    data_str = json.dumps(step.data) if step.data else None
+
+                    # Execute request using executor
+                    response = await executor.execute_request(
+                        method=step.method,
+                        endpoint=step.endpoint,
+                        headers=headers_str,
+                        data=data_str
+                    )
+                    
+                    # Log response
+                    await self._log_response(i, response)
+                    
+                except (ValueError, aiohttp.ClientError) as err:
+                    self.logger.log_error(f"Step {i} failed: {str(err)}")
+                    raise
+        except Exception as err:
+            self.logger.log_error(str(err))
+            raise
+
+    async def _log_response(self, step_number: int, response: aiohttp.ClientResponse) -> None:
+        """Log the response for a step."""
+        self.logger.log_status(response.status)
+        self.logger.log_headers(dict(response.headers))
+        try:
+            body = await response.json()
+            body_str = json.dumps(body, indent=2)
+        except:
+            body_str = await response.text()
+        self.logger.log_body(body_str) 
