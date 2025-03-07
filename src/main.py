@@ -2,9 +2,9 @@ import click
 import requests
 import json
 import sys
-from src.models.session.session_store import SessionStore
-from src.models.playbook.playbook import Playbook
-from src.utils.logging import create_logger, BaseLogger
+from src.modules.session.session_store import SessionStore
+from src.modules.playbook.playbook import Playbook
+from src.modules.logging import create_logger, BaseLogger
 
 # Instantiate the session store (this could be injected for tests)
 session_store = SessionStore()

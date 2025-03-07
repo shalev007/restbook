@@ -4,7 +4,7 @@ import json
 from .config import PlaybookConfig
 from .validator import PlaybookYamlValidator
 from ..session.session_store import SessionStore
-from src.utils.logging import BaseLogger
+from ..logging import BaseLogger
 
 
 class Playbook:
