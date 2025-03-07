@@ -138,45 +138,9 @@ def run(playbook_file):
         else:
             content = playbook_file.read()
 
-        # Parse the playbook
-        playbook = Playbook.from_yaml(content)
-        
-        # Validate session exists
-        sessions = session_store.list_sessions()
-        if playbook.session_name not in sessions:
-            raise ValueError(f"Session '{playbook.session_name}' does not exist")
-        session = sessions[playbook.session_name]
-
-        # Execute each step
-        for i, step in enumerate(playbook.steps, 1):
-            click.echo(f"\nExecuting step {i}...")
-            
-            # Prepare request
-            url = f"{session.base_url.rstrip('/')}/{step.endpoint.lstrip('/')}"
-            headers = {}
-            if session.token:
-                headers['Authorization'] = f"Bearer {session.token}"
-            if step.headers:
-                headers.update(step.headers)
-
-            # Make request
-            response = requests.request(
-                method=step.method,
-                url=url,
-                headers=headers,
-                json=step.data
-            )
-
-            # Print response
-            click.echo(f"Status: {response.status_code}")
-            click.echo("Headers:")
-            for key, value in response.headers.items():
-                click.echo(f"  {key}: {value}")
-            click.echo("\nBody:")
-            try:
-                click.echo(json.dumps(response.json(), indent=2))
-            except:
-                click.echo(response.text)
+        # Parse and execute the playbook with logging
+        playbook = Playbook.from_yaml(content, logger=click.echo)
+        playbook.execute(session_store)
 
     except ValueError as err:
         click.echo(str(err), err=True)
