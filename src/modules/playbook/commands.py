@@ -1,3 +1,4 @@
+import asyncio
 import click
 import sys
 import requests
@@ -30,7 +31,7 @@ def create_playbook_commands() -> click.Command:
 
             # Parse and execute the playbook with logging
             playbook = Playbook.from_yaml(content, logger=logger)
-            playbook.execute(session_store)
+            asyncio.run(playbook.execute(session_store))
 
         except ValueError as err:
             logger.log_error(str(err))

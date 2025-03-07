@@ -78,7 +78,7 @@ class Playbook:
             body = response.text
         self.logger.log_body(body)
 
-    def execute(self, session_store: SessionStore) -> list[requests.Response]:
+    async def execute(self, session_store: SessionStore) -> list[requests.Response]:
         """
         Execute the playbook using the provided session store.
         
