@@ -4,6 +4,7 @@ from typing import Optional
 from ..logging import BaseLogger
 from ..session.session_store import SessionStore
 from .executor import RequestExecutor
+import json
 
 
 def create_request_commands() -> click.Command:
@@ -36,18 +37,22 @@ def create_request_commands() -> click.Command:
         session_store: SessionStore = ctx.obj.session_store
         
         # Get session data
-        sessions = session_store.list_sessions()
-        if session_name not in sessions:
-            error_msg = f"Session '{session_name}' does not exist."
-            logger.log_error(error_msg)
-            raise ValueError(error_msg)
-        session = sessions[session_name]
+        session = session_store.get_session(session_name)
+        try:
+            _data = json.loads(data) if data else None
+        except json.JSONDecodeError:
+            logger.log_error(f"Invalid JSON data: {data}")
+            return
+    
+        try:
+            _headers = json.loads(headers) if headers else None
+        except json.JSONDecodeError:
+            logger.log_error(f"Invalid JSON headers: {headers}")
+            return
         
         # Create executor with session data and options
         executor = RequestExecutor(
-            base_url=session.base_url,
             session=session,
-            logger=logger,
             timeout=timeout,
             verify_ssl=not no_verify_ssl,
             max_retries=max_retries,
@@ -55,6 +60,11 @@ def create_request_commands() -> click.Command:
         )
         
         # Execute request
-        asyncio.run(executor.execute_request(method, endpoint, data, headers))
+        asyncio.run(executor.execute_request(
+            method=method,
+            endpoint=endpoint,
+            data=_data,
+            headers=_headers
+        ))
 
     return request 
