@@ -19,7 +19,8 @@ class OAuth2Authenticator(Authenticator):
         required = {'client_id', 'client_secret', 'token_url'}
         missing = required - credentials.keys()
         if missing:
-            raise ValueError(f"OAuth2 authentication requires {', '.join(missing)} in credentials")
+            missing_fields = "', '".join(missing)
+            raise ValueError(f"OAuth2 authentication requires '{missing_fields}' in credentials")
         
         self.client_id = credentials['client_id']
         self.client_secret = credentials['client_secret']
@@ -96,7 +97,13 @@ class OAuth2Authenticator(Authenticator):
 
             async with session.post(self.token_url, data=data) as response:
                 if response.status != 200:
-                    raise ValueError(f"OAuth2 authentication failed: {await response.text()}")
+                    error_text = await response.text()
+                    try:
+                        error_data = await response.json()
+                        error_msg = error_data.get('error', error_text)
+                    except:
+                        error_msg = error_text
+                    raise ValueError(f"Authentication failed: {error_msg}")
                 
                 token_data = await response.json()
                 self.access_token = token_data[self.access_token_key]
@@ -114,23 +121,24 @@ class OAuth2Authenticator(Authenticator):
                 self.client_id_key: self.client_id,
                 self.client_secret_key: self.client_secret,
             }
-
+            
             if self.grant_type:
                 data['grant_type'] = self.grant_type
-                match self.grant_type:
-                    case 'refresh_token':
-                        data.update({
-                            'refresh_token': self.refresh_token
-                        })
-                    case _:
-                        raise ValueError(f"Unsupported grant type: {self.grant_type}. "
-                                         f"Supported types are: {', '.join(self.SUPPORTED_GRANT_TYPES)}")
+                if self.grant_type == 'refresh_token':
+                    data.update({
+                        'refresh_token': self.refresh_token
+                    })
+
 
             async with session.post(self.token_url, data=data) as response:
                 if response.status != 200:
-                    # Refresh failed, try getting new token
-                    await self.authenticate()
-                    return
+                    error_text = await response.text()
+                    try:
+                        error_data = await response.json()
+                        error_msg = error_data.get('error', error_text)
+                    except:
+                        error_msg = error_text
+                    raise ValueError(f"Token refresh failed: {error_msg}")
                 
                 token_data = await response.json()
                 self.access_token = token_data[self.access_token_key]
