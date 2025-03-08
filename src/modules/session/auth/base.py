@@ -47,4 +47,4 @@ class Authenticator(ABC):
         """
         if not self.is_authenticated:
             raise ValueError("Not authenticated")
-        pass 
+        return {}
