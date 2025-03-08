@@ -129,4 +129,4 @@ class Playbook:
             body_str = json.dumps(body, indent=2)
         except:
             body_str = await response.text()
-        self.logger.log_body(body_str) 
+        self.logger.log_body(body_str)

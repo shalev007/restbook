@@ -13,6 +13,23 @@ class SessionStore:
         self.sessions: Dict[str, Session] = {}
         self._load_sessions()
 
+    def get_session(self, name: str) -> Session:
+        """
+        Get a session by name.
+        
+        Args:
+            name: Name of the session
+            
+        Returns:
+            Session: The requested session
+            
+        Raises:
+            ValueError: If the session does not exist
+        """
+        if name not in self.sessions:
+            raise ValueError(f"Session '{name}' not found")
+        return self.sessions[name]
+
     def upsert_session(self, name: str, session_data: str, overwrite: bool = False) -> Session:
         """
         Create a new session and persist it.

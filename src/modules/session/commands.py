@@ -144,14 +144,11 @@ def create_session_commands() -> click.Group:
         try:
             session_store: SessionStore = ctx.obj.session_store
             logger: BaseLogger = ctx.obj.logger
-            sessions = session_store.list_sessions()
             
-            if name not in sessions:
-                logger.log_error(f"Session '{name}' not found")
-                return
+            # Get current session
+            current_session = session_store.get_session(name)
             
-            # Get current session data
-            current_session = sessions[name]
+            # Prepare updated session data
             session_data: Dict[str, Any] = {
                 'base_url': base_url or current_session.base_url,
                 'auth': None
@@ -207,13 +204,11 @@ def create_session_commands() -> click.Group:
         try:
             session_store: SessionStore = ctx.obj.session_store
             logger: BaseLogger = ctx.obj.logger
-            sessions = session_store.list_sessions()
             
-            if name not in sessions:
-                logger.log_error(f"Session '{name}' not found")
-                return
-                
-            session = sessions[name]
+            # Get session
+            session = session_store.get_session(name)
+            
+            # Display session info
             logger.log_info(f"Session: {name}")
             logger.log_info(f"Base URL: {session.base_url}")
             
@@ -244,13 +239,10 @@ def create_session_commands() -> click.Group:
         try:
             session_store: SessionStore = ctx.obj.session_store
             logger: BaseLogger = ctx.obj.logger
-            sessions = session_store.list_sessions()
             
-            if name not in sessions:
-                logger.log_error(f"Session '{name}' not found")
-                return
-                
-            session = sessions[name]
+            # Get session
+            session = session_store.get_session(name)
+            
             if not session.auth_config:
                 logger.log_error(f"Session '{name}' has no authentication configured")
                 return
