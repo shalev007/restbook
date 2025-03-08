@@ -27,7 +27,8 @@ def create_session_commands() -> click.Group:
                       'OAuth2: {"client_id": "id", "client_secret": "secret", '
                       '"token_url": "https://auth.example.com/token", '
                       '"scope": "read write"}')
-    def create(name: str, base_url: str, auth_type: str | None = None,
+    @click.pass_context
+    def create(ctx, name: str, base_url: str, auth_type: str | None = None,
                auth_credentials: str | None = None) -> None:
         """
         Create a new session.
@@ -57,7 +58,8 @@ def create_session_commands() -> click.Group:
                 }'
         """
         try:
-            session_store = SessionStore()
+            session_store: SessionStore = ctx.obj.session_store
+            logger: BaseLogger = ctx.obj.logger
             
             # Prepare session data
             session_data = {
@@ -70,30 +72,32 @@ def create_session_commands() -> click.Group:
             
             # Create session
             session_store.upsert_session(name, json.dumps(session_data))
-            click.echo(f"Session '{name}' created successfully")
+            logger.log_info(f"Session '{name}' created successfully")
             
         except Exception as e:
-            click.echo(f"Error: {str(e)}", err=True)
+            logger.log_error(str(e))
 
     @session.command(name='list')
-    def list_sessions() -> None:
+    @click.pass_context
+    def list_sessions(ctx) -> None:
         """List all available sessions."""
         try:
-            session_store = SessionStore()
+            session_store: SessionStore = ctx.obj.session_store
+            logger: BaseLogger = ctx.obj.logger
             sessions = session_store.list_sessions()
             
             if not sessions:
-                click.echo("No sessions found")
+                logger.log_info("No sessions found")
                 return
                 
             for name, session in sessions.items():
-                click.echo(f"\nSession: {name}")
-                click.echo(f"Base URL: {session.base_url}")
+                logger.log_info(f"\nSession: {name}")
+                logger.log_info(f"Base URL: {session.base_url}")
                 if session.auth_config:
-                    click.echo(f"Auth Type: {session.auth_config.type}")
+                    logger.log_info(f"Auth Type: {session.auth_config.type}")
                     
         except Exception as e:
-            click.echo(f"Error: {str(e)}", err=True)
+            logger.log_error(str(e))
 
     @session.command(name='update')
     @click.argument('name')
@@ -109,7 +113,8 @@ def create_session_commands() -> click.Group:
                       'OAuth2: {"client_id": "id", "client_secret": "secret", '
                       '"token_url": "https://auth.example.com/token", '
                       '"scope": "read write"}')
-    def update(name: str, new_name: str | None = None, base_url: str | None = None,
+    @click.pass_context
+    def update(ctx, name: str, new_name: str | None = None, base_url: str | None = None,
                auth_type: str | None = None, auth_credentials: str | None = None) -> None:
         """
         Update an existing session.
@@ -137,11 +142,12 @@ def create_session_commands() -> click.Group:
                 --auth-credentials '{"username": "new-user", "password": "new-pass"}'
         """
         try:
-            session_store = SessionStore()
+            session_store: SessionStore = ctx.obj.session_store
+            logger: BaseLogger = ctx.obj.logger
             sessions = session_store.list_sessions()
             
             if name not in sessions:
-                click.echo(f"Session '{name}' not found")
+                logger.log_error(f"Session '{name}' not found")
                 return
             
             # Get current session data
@@ -174,55 +180,60 @@ def create_session_commands() -> click.Group:
             
             # Create/update session
             session_store.upsert_session(name, json.dumps(session_data), overwrite=True)
-            click.echo(f"Session '{name}' updated successfully")
+            logger.log_info(f"Session '{name}' updated successfully")
             
         except Exception as e:
-            click.echo(f"Error: {str(e)}", err=True)
+            logger.log_error(str(e))
 
     @session.command(name='delete')
     @click.argument('name')
-    def delete(name: str) -> None:
+    @click.pass_context
+    def delete(ctx, name: str) -> None:
         """Delete a session."""
         try:
-            session_store = SessionStore()
+            session_store: SessionStore = ctx.obj.session_store
+            logger: BaseLogger = ctx.obj.logger
             session_store.delete_session(name)
-            click.echo(f"Session '{name}' deleted successfully")
+            logger.log_info(f"Session '{name}' deleted successfully")
             
         except Exception as e:
-            click.echo(f"Error: {str(e)}", err=True)
+            logger.log_error(str(e))
 
     @session.command(name='show')
     @click.argument('name')
-    def show(name: str) -> None:
+    @click.pass_context
+    def show(ctx, name: str) -> None:
         """Show details of a specific session."""
         try:
-            session_store = SessionStore()
+            session_store: SessionStore = ctx.obj.session_store
+            logger: BaseLogger = ctx.obj.logger
             sessions = session_store.list_sessions()
             
             if name not in sessions:
-                click.echo(f"Session '{name}' not found")
+                logger.log_error(f"Session '{name}' not found")
                 return
                 
             session = sessions[name]
-            click.echo(f"Session: {name}")
-            click.echo(f"Base URL: {session.base_url}")
+            logger.log_info(f"Session: {name}")
+            logger.log_info(f"Base URL: {session.base_url}")
             
             if session.auth_config:
-                click.echo("\nAuthentication:")
-                click.echo(f"  Type: {session.auth_config.type}")
-                click.echo("  Credentials:")
+                logger.log_info("\nAuthentication:")
+                logger.log_info(f"  Type: {session.auth_config.type}")
+                logger.log_info("  Credentials:")
                 for key, value in session.auth_config.credentials.items():
                     # Mask sensitive values
                     if key in {'token', 'password', 'client_secret'}:
                         value = '*' * 8
-                    click.echo(f"    {key}: {value}")
+                    logger.log_info(f"    {key}: {value}")
                     
         except Exception as e:
-            click.echo(f"Error: {str(e)}", err=True)
+            logger.log_error(str(e))
 
     @session.command(name='authenticate')
     @click.argument('name')
-    def authenticate(name: str) -> None:
+    @click.pass_context
+    def authenticate(ctx, name: str) -> None:
         """
         Test authentication for a session.
         
@@ -231,39 +242,40 @@ def create_session_commands() -> click.Group:
             restbook session authenticate my-api
         """
         try:
-            session_store = SessionStore()
+            session_store: SessionStore = ctx.obj.session_store
+            logger: BaseLogger = ctx.obj.logger
             sessions = session_store.list_sessions()
             
             if name not in sessions:
-                click.echo(f"Session '{name}' not found")
+                logger.log_error(f"Session '{name}' not found")
                 return
                 
             session = sessions[name]
             if not session.auth_config:
-                click.echo(f"Session '{name}' has no authentication configured")
+                logger.log_error(f"Session '{name}' has no authentication configured")
                 return
 
             # Run the authentication test
             async def test_auth():
                 try:
-                    click.echo("Testing authentication...")
+                    logger.log_info("Testing authentication...")
                     headers = await session.get_headers()
-                    click.echo("\nAuthentication successful!")
-                    click.echo("\nHeaders:")
+                    logger.log_info("\nAuthentication successful!")
+                    logger.log_info("\nHeaders:")
                     for key, value in headers.items():
                         # Mask the actual token in the output
                         if key.lower() == 'authorization':
                             parts = value.split(' ')
                             if len(parts) > 1:
                                 value = f"{parts[0]} {'*' * 8}"
-                        click.echo(f"  {key}: {value}")
+                        logger.log_info(f"  {key}: {value}")
                 except Exception as e:
-                    click.echo(f"\nAuthentication failed: {str(e)}", err=True)
+                    logger.log_error(f"\nAuthentication failed: {str(e)}")
 
             # Run the async test
             asyncio.run(test_auth())
             
         except Exception as e:
-            click.echo(f"Error: {str(e)}", err=True)
+            logger.log_error(str(e))
 
     return session 
