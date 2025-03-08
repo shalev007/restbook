@@ -15,27 +15,36 @@ class Authenticator(ABC):
 
     def __init__(self, credentials: Dict[str, str]):
         self.credentials = credentials
+        self.is_authenticated = False
 
     @abstractmethod
-    async def authenticate(self) -> Dict[str, str]:
-        """Authenticate and return headers to use for requests.
+    async def authenticate(self) -> None:
+        """Authenticate with the service.
         
-        Returns:
-            Dict[str, str]: Headers to include in requests
-            
         Raises:
             ValueError: If authentication fails
         """
         pass
 
     @abstractmethod
-    async def refresh(self) -> Dict[str, str]:
+    async def refresh(self) -> None:
         """Refresh authentication if needed.
         
-        Returns:
-            Dict[str, str]: Updated headers to use for requests
-            
         Raises:
             ValueError: If refresh fails
         """
+        pass
+
+    @abstractmethod
+    def get_headers(self) -> Dict[str, str]:
+        """Get headers for authenticated requests.
+        
+        Returns:
+            Dict[str, str]: Headers to include in requests
+            
+        Raises:
+            ValueError: If not authenticated
+        """
+        if not self.is_authenticated:
+            raise ValueError("Not authenticated")
         pass 

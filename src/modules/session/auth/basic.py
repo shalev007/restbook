@@ -13,6 +13,8 @@ class BasicAuthenticator(Authenticator):
         self.username = credentials['username']
         self.password = credentials['password']
         self._auth_header = self._create_auth_header()
+        # Basic auth is always authenticated once credentials are set
+        self.is_authenticated = True
 
     def _create_auth_header(self) -> str:
         auth_string = f"{self.username}:{self.password}"
@@ -20,9 +22,14 @@ class BasicAuthenticator(Authenticator):
         encoded = base64.b64encode(auth_bytes).decode('utf-8')
         return f'Basic {encoded}'
 
-    async def authenticate(self) -> Dict[str, str]:
-        return {'Authorization': self._auth_header}
+    async def authenticate(self) -> None:
+        # Basic auth is pre-authenticated
+        pass
 
-    async def refresh(self) -> Dict[str, str]:
+    async def refresh(self) -> None:
         # Basic auth doesn't support refresh
-        return await self.authenticate() 
+        pass
+
+    def get_headers(self) -> Dict[str, str]:
+        super().get_headers()  # Check authentication state
+        return {'Authorization': self._auth_header} 

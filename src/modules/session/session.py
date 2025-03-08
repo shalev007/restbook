@@ -18,17 +18,27 @@ class Session:
         if self.auth_config:
             self.authenticator = create_authenticator(self.auth_config)
 
-    async def get_headers(self) -> Dict[str, str]:
+    async def authenticate(self) -> None:
+        """Authenticate the session if needed."""
+        if not self.authenticator:
+            return
+        await self.authenticator.authenticate()
+
+    async def refresh_auth(self) -> None:
+        """Refresh authentication if possible."""
+        if not self.authenticator:
+            return
+        await self.authenticator.refresh()
+
+    def get_headers(self) -> Dict[str, str]:
         """Get headers for the request, including authentication if configured."""
         if not self.authenticator:
             return {}
-        return await self.authenticator.authenticate()
+        return self.authenticator.get_headers()
 
-    async def refresh_auth(self) -> Dict[str, str]:
-        """Refresh authentication if possible."""
-        if not self.authenticator:
-            return {}
-        return await self.authenticator.refresh()
+    def is_authenticated(self) -> bool:
+        """Check if the session is authenticated."""
+        return self.authenticator.is_authenticated if self.authenticator else True
 
     @classmethod
     def from_dict(cls, name: str, data: Dict[str, Any]) -> 'Session':

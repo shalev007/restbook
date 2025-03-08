@@ -251,7 +251,13 @@ def create_session_commands() -> click.Group:
             async def test_auth():
                 try:
                     logger.log_info("Testing authentication...")
-                    headers = await session.get_headers()
+                    
+                    # Authenticate if needed
+                    if not session.is_authenticated():
+                        await session.authenticate()
+                    
+                    # Get headers
+                    headers = session.get_headers()
                     logger.log_info("\nAuthentication successful!")
                     logger.log_info("\nHeaders:")
                     for key, value in headers.items():

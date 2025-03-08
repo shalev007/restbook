@@ -59,10 +59,7 @@ class OAuth2Authenticator(Authenticator):
                 raise ValueError(f"Unsupported grant type: {self.grant_type}. "
                                  f"Supported types are: {', '.join(self.SUPPORTED_GRANT_TYPES)}")
 
-    async def authenticate(self) -> Dict[str, str]:
-        if self.access_token:
-            return {'Authorization': f'Bearer {self.access_token}'}
-
+    async def authenticate(self) -> None:
         # Get initial token
         async with aiohttp.ClientSession() as session:
             data = {
@@ -104,13 +101,13 @@ class OAuth2Authenticator(Authenticator):
                 token_data = await response.json()
                 self.access_token = token_data[self.access_token_key]
                 self.refresh_token = token_data.get(self.refresh_token_key, self.refresh_token)
-                
-                return {'Authorization': f'Bearer {self.access_token}'}
+                self.is_authenticated = True
 
-    async def refresh(self) -> Dict[str, str]:
+    async def refresh(self) -> None:
         if not self.refresh_token:
             # No refresh token, get new access token
-            return await self.authenticate()
+            await self.authenticate()
+            return
 
         async with aiohttp.ClientSession() as session:
             data = {
@@ -132,10 +129,14 @@ class OAuth2Authenticator(Authenticator):
             async with session.post(self.token_url, data=data) as response:
                 if response.status != 200:
                     # Refresh failed, try getting new token
-                    return await self.authenticate()
+                    await self.authenticate()
+                    return
                 
                 token_data = await response.json()
                 self.access_token = token_data[self.access_token_key]
                 self.refresh_token = token_data.get(self.refresh_token_key, self.refresh_token)
-                
-                return {'Authorization': f'Bearer {self.access_token}'} 
+                self.is_authenticated = True
+
+    def get_headers(self) -> Dict[str, str]:
+        super().get_headers()  # Check authentication state
+        return {'Authorization': f'Bearer {self.access_token}'} 
