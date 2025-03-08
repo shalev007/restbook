@@ -79,12 +79,7 @@ class Playbook:
         """
         try:
             # Validate session exists
-            sessions = session_store.list_sessions()
-            if self.session_name not in sessions:
-                error_msg = f"Session '{self.session_name}' does not exist"
-                self.logger.log_error(error_msg)
-                raise ValueError(error_msg)
-            session = sessions[self.session_name]
+            session = session_store.get_session(self.session_name)
 
             # Create request executor for this playbook execution
             executor = RequestExecutor(
