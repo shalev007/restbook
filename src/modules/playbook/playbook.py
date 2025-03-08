@@ -86,24 +86,17 @@ class Playbook:
                 session=session,
                 # Use default values for timeout, verify_ssl, max_retries, and backoff_factor
             )
-
-            responses: List[aiohttp.ClientResponse] = []
             # Execute each step
             for i, step in enumerate(self.steps, 1):
                 self.logger.log_step(i, step.method, step.endpoint)
                 
                 try:
-                    # Convert step headers to JSON string if present
-                    headers_str = json.dumps(step.headers) if step.headers else None
-                    # Convert step data to JSON string if present
-                    data_str = json.dumps(step.data) if step.data else None
-
                     # Execute request using executor
                     response = await executor.execute_request(
                         method=step.method,
                         endpoint=step.endpoint,
-                        headers=headers_str,
-                        data=data_str
+                        headers=step.headers,  # Pass headers dict directly
+                        data=step.data  # Pass data dict directly
                     )
                     
                     # Log response

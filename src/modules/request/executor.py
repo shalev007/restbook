@@ -44,22 +44,21 @@ class RequestExecutor:
         self,
         method: str,
         endpoint: str,
-        data: Optional[str] = None,
-        headers: Optional[str] = None
+        data: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, str]] = None
     ) -> aiohttp.ClientResponse:
         """Execute an HTTP request asynchronously.
         
         Args:
             method: HTTP method (GET, POST, etc.)
             endpoint: API endpoint path
-            data: Optional JSON data to send with the request
-            headers: Optional JSON string of additional headers
+            data: Optional dictionary of data to send with the request
+            headers: Optional dictionary of additional headers
             
         Returns:
             aiohttp.ClientResponse: The response from the server
             
         Raises:
-            ValueError: If the headers or data are invalid JSON
             aiohttp.ClientError: If the request fails
         """
         try:
@@ -73,14 +72,11 @@ class RequestExecutor:
                         # Get fresh headers for each attempt in case of auth refresh
                         request_headers = await self._prepare_headers(headers)
                         
-                        # Prepare data
-                        request_data = self._prepare_data(data)
-                        
                         # Make the request
                         async with client.request(
                             method=method,
                             url=url,
-                            json=request_data,
+                            json=data,  # data is already a dict
                             headers=request_headers,
                             ssl=self.verify_ssl
                         ) as response:
@@ -119,22 +115,24 @@ class RequestExecutor:
 
                 return self._raise_error(aiohttp.ClientError("Max retries exceeded"))
 
-        except ValueError as err:
-            return self._raise_error(err)
         except aiohttp.ClientError as err:
             return self._raise_error(err)
 
-    async def _prepare_headers(self, headers: Optional[str]) -> Dict[str, str]:
-        """Prepare request headers."""
+    async def _prepare_headers(self, headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        """Prepare request headers.
+        
+        Args:
+            headers: Optional dictionary of additional headers to include
+            
+        Returns:
+            Dict[str, str]: Combined headers including authentication
+        """
         request_headers = {}
         if not self.session.is_authenticated():
             await self.session.authenticate()
         request_headers = self.session.get_headers()
         if headers:
-            try:
-                request_headers.update(json.loads(headers))
-            except json.JSONDecodeError:
-                raise ValueError("Headers must be in valid JSON format")
+            request_headers.update(headers)
         return request_headers
 
     def _prepare_data(self, data: Optional[str]) -> Optional[Dict[str, Any]]:
