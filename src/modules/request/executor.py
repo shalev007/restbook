@@ -67,7 +67,7 @@ class RequestExecutor:
             url = f"{self.session.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
             
             # Prepare headers
-            request_headers = self._prepare_headers(headers)
+            request_headers = await self._prepare_headers(headers)
             
             # Prepare data
             request_data = self._prepare_data(data)
@@ -111,11 +111,12 @@ class RequestExecutor:
         except aiohttp.ClientError as err:
             return self._raise_error(err)
 
-    def _prepare_headers(self, headers: Optional[str]) -> Dict[str, str]:
+    async def _prepare_headers(self, headers: Optional[str]) -> Dict[str, str]:
         """Prepare request headers."""
         request_headers = {}
-        if self.session.token:
-            request_headers['Authorization'] = f"Bearer {self.session.token}"
+        if not self.session.is_authenticated():
+            await self.session.authenticate()
+        request_headers = self.session.get_headers()
         if headers:
             try:
                 request_headers.update(json.loads(headers))
