@@ -1,5 +1,6 @@
 import click
 import json
+import asyncio
 from typing import Dict, Any
 from ..logging import BaseLogger
 from .session_store import SessionStore
@@ -216,6 +217,52 @@ def create_session_commands() -> click.Group:
                         value = '*' * 8
                     click.echo(f"    {key}: {value}")
                     
+        except Exception as e:
+            click.echo(f"Error: {str(e)}", err=True)
+
+    @session.command(name='authenticate')
+    @click.argument('name')
+    def authenticate(name: str) -> None:
+        """
+        Test authentication for a session.
+        
+        Examples:
+            # Test authentication for a session
+            restbook session authenticate my-api
+        """
+        try:
+            session_store = SessionStore()
+            sessions = session_store.list_sessions()
+            
+            if name not in sessions:
+                click.echo(f"Session '{name}' not found")
+                return
+                
+            session = sessions[name]
+            if not session.auth_config:
+                click.echo(f"Session '{name}' has no authentication configured")
+                return
+
+            # Run the authentication test
+            async def test_auth():
+                try:
+                    click.echo("Testing authentication...")
+                    headers = await session.get_headers()
+                    click.echo("\nAuthentication successful!")
+                    click.echo("\nHeaders:")
+                    for key, value in headers.items():
+                        # Mask the actual token in the output
+                        if key.lower() == 'authorization':
+                            parts = value.split(' ')
+                            if len(parts) > 1:
+                                value = f"{parts[0]} {'*' * 8}"
+                        click.echo(f"  {key}: {value}")
+                except Exception as e:
+                    click.echo(f"\nAuthentication failed: {str(e)}", err=True)
+
+            # Run the async test
+            asyncio.run(test_auth())
+            
         except Exception as e:
             click.echo(f"Error: {str(e)}", err=True)
 
