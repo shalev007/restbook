@@ -22,19 +22,31 @@ class Session:
         """Authenticate the session if needed."""
         if not self.authenticator:
             return
-        await self.authenticator.authenticate()
+        try:
+            await self.authenticator.authenticate()
+        except Exception as e:
+            self.authenticator.is_authenticated = False
+            raise ValueError(f"Authentication failed: {str(e)}")
 
     async def refresh_auth(self) -> None:
         """Refresh authentication if possible."""
         if not self.authenticator:
             return
-        await self.authenticator.refresh()
+        try:
+            await self.authenticator.refresh()
+        except Exception as e:
+            self.authenticator.is_authenticated = False
+            raise ValueError(f"Authentication refresh failed: {str(e)}")
 
     def get_headers(self) -> Dict[str, str]:
         """Get headers for the request, including authentication if configured."""
         if not self.authenticator:
             return {}
-        return self.authenticator.get_headers()
+        try:
+            return self.authenticator.get_headers()
+        except ValueError as e:
+            # Re-raise with more context
+            raise ValueError(f"Failed to get authentication headers: {str(e)}")
 
     def is_authenticated(self) -> bool:
         """Check if the session is authenticated."""
