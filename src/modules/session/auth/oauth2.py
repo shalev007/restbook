@@ -102,8 +102,8 @@ class OAuth2Authenticator(Authenticator):
                     raise ValueError(f"OAuth2 authentication failed: {await response.text()}")
                 
                 token_data = await response.json()
-                self.access_token = token_data['access_token']
-                self.refresh_token = token_data.get('refresh_token')
+                self.access_token = token_data[self.access_token_key]
+                self.refresh_token = token_data.get(self.refresh_token_key, self.refresh_token)
                 
                 return {'Authorization': f'Bearer {self.access_token}'}
 
