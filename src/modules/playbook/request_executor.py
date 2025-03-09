@@ -17,7 +17,7 @@ class RequestExecutor:
         url = f"{self.session.base_url.rstrip('/')}/{path.lstrip('/')}"
         
         # Get authentication headers
-        auth_headers = await self.session.get_headers()
+        auth_headers = self.session.get_headers()
         
         # Merge request headers with auth headers
         request_headers = {**auth_headers, **(headers or {})}
@@ -37,7 +37,8 @@ class RequestExecutor:
                     # If authentication failed, try to refresh and retry once
                     if status == 401 and self.session.authenticator:
                         self.logger.log_info("Authentication failed, attempting to refresh...")
-                        auth_headers = await self.session.refresh_auth()
+                        await self.session.refresh_auth()
+                        auth_headers = self.session.get_headers()
                         request_headers = {**auth_headers, **(headers or {})}
                         
                         async with client.request(method, url, headers=request_headers, json=body) as retry_response:
