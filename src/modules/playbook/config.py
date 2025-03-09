@@ -1,28 +1,49 @@
-from typing import List, Dict, Any
 from dataclasses import dataclass
+from enum import Enum
+from typing import List, Dict, Any
 
+from typing import Optional, Dict, Any, List
+from pydantic import BaseModel
 
-@dataclass
-class PlaybookStep:
-    """Represents a single step in a playbook."""
-    method: str
+class MethodConfig(str, Enum):
+    GET = "GET"
+    POST = "POST"
+    PUT = "PUT"
+    DELETE = "DELETE"
+    PATCH = "PATCH"
+
+class RequestConfig(BaseModel):
+    method: MethodConfig = MethodConfig.GET  # Defaults to GET if not provided.
     endpoint: str
-    headers: Dict[str, str] | None = None
-    data: Dict[str, Any] | None = None
+    data: Optional[Dict[str, Any]] = None
+    params: Optional[Dict[str, Any]] = None
+    headers: Optional[Dict[str, Any]] = None
+class StoreConfig(BaseModel):
+    var: str
+    query: Optional[str] = None
 
+class RetryConfig(BaseModel):
+    max_retries: Optional[int] = 3
+    backoff_factor: Optional[float] = 1.0
+    timeout: Optional[int] = 10
 
-@dataclass
-class PlaybookConfig:
-    """Configuration for a playbook execution."""
-    session_name: str
-    steps: List[PlaybookStep]
+class OnErrorConfig(str, Enum):
+    IGNORE = "ignore"
+    ABORT = "abort"
 
-    @classmethod
-    def create_step(cls, step_dict: Dict[str, Any]) -> PlaybookStep:
-        """Create a PlaybookStep from a dictionary."""
-        return PlaybookStep(
-            method=step_dict["method"],
-            endpoint=step_dict["endpoint"],
-            headers=step_dict.get("headers"),
-            data=step_dict.get("data")
-        ) 
+class StepConfig(BaseModel):
+    session: str
+    iterate: Optional[str] = None
+    request: RequestConfig  # Use our nested model for request details.
+    store: Optional[StoreConfig] = None
+    retry: Optional[RetryConfig] = None
+    validate_ssl: Optional[bool] = True
+    on_error: Optional[OnErrorConfig] = OnErrorConfig.ABORT
+
+class PhaseConfig(BaseModel):
+    name: str
+    parallel: Optional[bool] = False  # Default to sequential execution.
+    steps: List[StepConfig]
+
+class PlaybookConfig(BaseModel):
+    phases: List[PhaseConfig]

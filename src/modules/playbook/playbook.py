@@ -2,7 +2,7 @@ from typing import Dict, Any, Optional, List
 import asyncio
 import aiohttp
 import json
-from .config import PlaybookConfig, PlaybookStep
+from .config import PlaybookConfig
 from .validator import PlaybookYamlValidator
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
@@ -41,30 +41,9 @@ class Playbook:
         config = PlaybookYamlValidator.validate_and_load(yaml_content)
         return cls(config, logger)
 
-    @property
-    def session_name(self) -> str:
-        """Get the session name."""
-        return self.config.session_name
-
-    @property
-    def steps(self) -> List[PlaybookStep]:
-        """Get the playbook steps."""
-        return self.config.steps
-
     def to_dict(self) -> Dict[str, Any]:
         """Convert the playbook to a dictionary."""
-        return {
-            "session_name": self.session_name,
-            "steps": [
-                {
-                    "method": step.method,
-                    "endpoint": step.endpoint,
-                    **({"headers": step.headers} if step.headers else {}),
-                    **({"data": step.data} if step.data else {})
-                }
-                for step in self.steps
-            ]
-        }
+        return self.config.model_dump()
 
     async def execute(self, session_store: SessionStore) -> None:
         """
@@ -77,44 +56,6 @@ class Playbook:
             ValueError: If the session does not exist
             aiohttp.ClientError: If any request fails
         """
-        try:
-            # Validate session exists
-            session = session_store.get_session(self.session_name)
-
-            # Create request executor for this playbook execution
-            executor = RequestExecutor(
-                session=session,
-                # Use default values for timeout, verify_ssl, max_retries, and backoff_factor
-            )
-            # Execute each step
-            for i, step in enumerate(self.steps, 1):
-                self.logger.log_step(i, step.method, step.endpoint)
-                
-                try:
-                    # Execute request using executor
-                    response = await executor.execute_request(
-                        method=step.method,
-                        endpoint=step.endpoint,
-                        headers=step.headers,  # Pass headers dict directly
-                        data=step.data  # Pass data dict directly
-                    )
-                    
-                    # Log response
-                    await self._log_response(i, response)
-                    
-                except (ValueError, aiohttp.ClientError) as err:
-                    self.logger.log_error(f"Step {i} failed: {str(err)}")
-                    raise
-        except Exception as err:
-            self.logger.log_error(str(err))
-            raise
-
-    async def _log_response(self, step_number: int, response: aiohttp.ClientResponse) -> None:
-        """Log the response for a step."""
-        self.logger.log_status(response.status)
-        try:
-            body = await response.json()
-            body_str = json.dumps(body, indent=2)
-        except:
-            body_str = await response.text()
-        self.logger.log_body(body_str)
+        # TODO: Implement execution logic for the new config structure
+        # For now, just log that execution is not implemented
+        self.logger.log_info("Playbook execution not yet implemented for new config structure")
