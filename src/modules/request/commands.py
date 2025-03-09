@@ -1,10 +1,22 @@
 import asyncio
+import aiohttp
 import click
 from typing import Optional
 from ..logging import BaseLogger
 from ..session.session_store import SessionStore
 from .executor import RequestExecutor
 import json
+
+
+async def log_response(response: aiohttp.ClientResponse, logger: BaseLogger) -> None:
+    """Log the response for a step."""
+    logger.log_status(response.status)
+    try:
+        body = await response.json()
+        body_str = json.dumps(body, indent=2)
+    except:
+        body_str = await response.text()
+    logger.log_body(body_str)
 
 
 def create_request_commands() -> click.Command:
@@ -60,11 +72,13 @@ def create_request_commands() -> click.Command:
         )
         
         # Execute request
-        asyncio.run(executor.execute_request(
+        response =asyncio.run(executor.execute_request(
             method=method,
             endpoint=endpoint,
             data=_data,
             headers=_headers
         ))
+
+        asyncio.run(log_response(response, logger))
 
     return request 
