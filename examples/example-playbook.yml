@@ -1,6 +1,5 @@
 phases:
   - name: "Initialization"
-    parallel: false
     steps:
       - session: json-placeholder
         request:
@@ -9,8 +8,8 @@ phases:
           headers:
             Accept: "application/json"
         store:
-          var: "users"
-          query: "users[*].id"
+          - var: "users"
+            query: "users[*].id"
         retry:
           max_retries: 3
           backoff_factor: 1.0
@@ -29,8 +28,8 @@ phases:
           params:
             details: "full"
         store:
-          var: "user_{user_id}_details"
-          query: "."
+          - var: "user_{user_id}_details"
+            query: "."
         retry:
           max_retries: 2
           backoff_factor: 0.5
@@ -51,8 +50,8 @@ phases:
             body: "This is a test post for user {user_id}."
             userId: "{user_id}"
         store:
-          var: "post_{user_id}_id"
-          query: ".id"
+          - var: "post_{user_id}_id"
+            query: ".id"
         retry:
           max_retries: 3
           backoff_factor: 1.0

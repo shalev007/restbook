@@ -35,7 +35,7 @@ class StepConfig(BaseModel):
     session: str
     iterate: Optional[str] = None
     request: RequestConfig  # Use our nested model for request details.
-    store: Optional[StoreConfig] = None
+    store: Optional[List[StoreConfig]] = None
     retry: Optional[RetryConfig] = None
     validate_ssl: Optional[bool] = True
     on_error: Optional[OnErrorConfig] = OnErrorConfig.ABORT
