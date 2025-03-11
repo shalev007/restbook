@@ -3,7 +3,6 @@ from typing import Dict, Any, Optional, List, Union
 import asyncio
 import jq  # type: ignore
 from jinja2 import Template
-from copy import deepcopy
 from .config import PlaybookConfig, PhaseConfig, StepConfig, StoreConfig, RequestConfig
 from .validator import PlaybookYamlValidator
 from ..session.session_store import SessionStore
@@ -181,7 +180,7 @@ class Playbook:
                     }
                     
                     # Create a copy of the step with rendered templates
-                    rendered_step = deepcopy(step)
+                    rendered_step = step.model_copy(deep=True)
                     rendered_step.request = self._render_request_config(step.request, context)
                     if step.store:
                         rendered_step.store = [self._render_store_config(store, context) for store in step.store]
