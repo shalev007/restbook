@@ -9,7 +9,7 @@ phases:
             Accept: "application/json"
         store:
           - var: "users"
-            query: "map(.id)"
+            jq: "map(.id)"
         retry:
           max_retries: 3
           backoff_factor: 1.0
@@ -24,12 +24,12 @@ phases:
         iterate: "user_id in users"
         request:
           method: GET
-          endpoint: "/users/{user_id}"
+          endpoint: "/users/{{ user_id }}"
           params:
             details: "full"
         store:
-          - var: "user_{user_id}_details"
-            query: "."
+          - var: "user_{{ user_id }}_details"
+            jq: "."
         retry:
           max_retries: 2
           backoff_factor: 0.5
@@ -46,12 +46,12 @@ phases:
           method: POST
           endpoint: "/posts"
           data:
-            title: "Post by user {user_id}"
-            body: "This is a test post for user {user_id}."
-            userId: "{user_id}"
+            title: "Post by user {{ user_id }}"
+            body: "This is a test post for user {{ user_id }}."
+            userId: "{{ user_id }}"
         store:
-          - var: "post_{user_id}_id"
-            query: ".id"
+          - var: "post_{{ user_id }}_id"
+            jq: ".id"
         retry:
           max_retries: 3
           backoff_factor: 1.0
