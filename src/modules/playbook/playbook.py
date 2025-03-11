@@ -28,6 +28,7 @@ class Playbook:
         self.config = config
         self.logger = logger
         self.variables: Dict[str, Any] = {}
+        self._template_cache: Dict[str, Template] = {}
 
     @classmethod
     def from_yaml(cls, yaml_content: str, logger: BaseLogger) -> 'Playbook':
@@ -103,10 +104,16 @@ class Playbook:
                 self.logger.log_error(f"Body: {body_str}")
                 raise
 
+    def _get_template(self, template_str: str) -> Template:
+        """Get a cached template or compile and cache it."""
+        if template_str not in self._template_cache:
+            self._template_cache[template_str] = Template(str(template_str))
+        return self._template_cache[template_str]
+
     def _render_template(self, template_str: str, context: Dict[str, Any]) -> str:
         """Render a Jinja2 template string with the given context."""
         try:
-            template = Template(str(template_str))
+            template = self._get_template(template_str)
             return template.render(**context)
         except Exception as e:
             self.logger.log_error(f"Failed to render template '{template_str}': {str(e)}")
