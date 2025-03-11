@@ -1,6 +1,7 @@
 import json
 from typing import Dict, Any, Optional, List
 import asyncio
+import jq  # type: ignore
 from .config import PlaybookConfig, PhaseConfig, StepConfig
 from .validator import PlaybookYamlValidator
 from ..session.session_store import SessionStore
@@ -21,6 +22,7 @@ class Playbook:
         """
         self.config = config
         self.logger = logger
+        self.variables: Dict[str, Any] = {}
 
     @classmethod
     def from_yaml(cls, yaml_content: str, logger: BaseLogger) -> 'Playbook':
@@ -100,15 +102,30 @@ class Playbook:
                 data=step.request.data
             )
 
-            # TODO: Handle response storage in variables when store config is present
-            # TODO: Handle iteration over variables when iterate is present
-
-            # log response
+            # Log response
             self.logger.log_status(response.status)
             try:
                 body = await response.json()
                 body_str = json.dumps(body, indent=2)
-            except:
+                
+                # Store response data if configured
+                if step.store:
+                    for store_config in step.store:
+                        try:
+                            # Compile and execute JQ query
+                            query = jq.compile(store_config.query) if store_config.query else jq.compile('.')
+                            result = query.input(body).first()
+                            
+                            # Store the result
+                            self.variables[store_config.var] = result
+                            self.logger.log_info(f"Stored variable '{store_config.var}' = {json.dumps(result)}")
+                        except Exception as e:
+                            self.logger.log_error(f"Failed to store variable '{store_config.var}': {str(e)}")
+                            self.logger.log_error(f"Body: {body_str}")
+                            if step.on_error != "ignore":
+                                raise
+                
+            except json.JSONDecodeError:
                 body_str = await response.text()
             self.logger.log_body(body_str)
 

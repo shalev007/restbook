@@ -9,7 +9,7 @@ phases:
             Accept: "application/json"
         store:
           - var: "users"
-            query: "users[*].id"
+            query: "map(.id)"
         retry:
           max_retries: 3
           backoff_factor: 1.0
