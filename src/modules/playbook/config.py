@@ -20,7 +20,7 @@ class RequestConfig(BaseModel):
     headers: Optional[Dict[str, Any]] = None
 class StoreConfig(BaseModel):
     var: str
-    query: Optional[str] = None
+    jq: Optional[str] = None  # JQ query to extract data from response
 
 class RetryConfig(BaseModel):
     max_retries: Optional[int] = 3

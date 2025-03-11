@@ -2,7 +2,7 @@ import json
 from typing import Dict, Any, Optional, List
 import asyncio
 import jq  # type: ignore
-from .config import PlaybookConfig, PhaseConfig, StepConfig
+from .config import PlaybookConfig, PhaseConfig, StepConfig, StoreConfig
 from .validator import PlaybookYamlValidator
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
@@ -79,6 +79,25 @@ class Playbook:
             for step in phase.steps:
                 await self._execute_step(step, session_store)
 
+    async def _store_response_data(self, store_configs: List[StoreConfig], body: Dict[str, Any], body_str: str) -> None:
+        """Store response data using configured JQ queries."""
+        if not store_configs:
+            return
+
+        for store_config in store_configs:
+            try:
+                # Compile and execute JQ query
+                query = jq.compile(store_config.jq) if store_config.jq else jq.compile('.')
+                result = query.input(body).first()
+                
+                # Store the result
+                self.variables[store_config.var] = result
+                self.logger.log_info(f"Stored variable '{store_config.var}' = {json.dumps(result)}")
+            except Exception as e:
+                self.logger.log_error(f"Failed to store variable '{store_config.var}': {str(e)}")
+                self.logger.log_error(f"Body: {body_str}")
+                raise
+
     async def _execute_step(self, step: StepConfig, session_store: SessionStore) -> None:
         """Execute a single step of the playbook."""
         try:
@@ -110,20 +129,11 @@ class Playbook:
                 
                 # Store response data if configured
                 if step.store:
-                    for store_config in step.store:
-                        try:
-                            # Compile and execute JQ query
-                            query = jq.compile(store_config.query) if store_config.query else jq.compile('.')
-                            result = query.input(body).first()
-                            
-                            # Store the result
-                            self.variables[store_config.var] = result
-                            self.logger.log_info(f"Stored variable '{store_config.var}' = {json.dumps(result)}")
-                        except Exception as e:
-                            self.logger.log_error(f"Failed to store variable '{store_config.var}': {str(e)}")
-                            self.logger.log_error(f"Body: {body_str}")
-                            if step.on_error != "ignore":
-                                raise
+                    try:
+                        await self._store_response_data(step.store, body, body_str)
+                    except Exception as e:
+                        if step.on_error != "ignore":
+                            raise
                 
             except json.JSONDecodeError:
                 body_str = await response.text()
