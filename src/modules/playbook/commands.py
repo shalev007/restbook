@@ -10,7 +10,14 @@ from .playbook import Playbook
 
 def create_playbook_commands() -> click.Command:
     """Create the playbook command."""
-    @click.command()
+
+    @click.group(name='playbook')
+    @click.pass_context
+    def playbook(ctx):
+        """Manage and execute playbooks."""
+        pass
+
+    @playbook.command(name='run')
     @click.argument('playbook_file', type=click.File('r'), required=False)
     @click.pass_context
     def run(ctx, playbook_file: Optional[TextIO]):
@@ -38,4 +45,4 @@ def create_playbook_commands() -> click.Command:
         except requests.exceptions.RequestException as err:
             logger.log_error(f"Request failed: {str(err)}")
 
-    return run 
+    return playbook 
