@@ -2,16 +2,16 @@ import json
 from typing import Dict, Any, Optional, List, Union
 import asyncio
 import jq  # type: ignore
-from jinja2 import Template
-from .config import PlaybookConfig, PhaseConfig, StepConfig, StoreConfig, RequestConfig
+from copy import deepcopy
+
+from src.modules.session.session import Session
+
+from .config import AuthType, PlaybookConfig, PhaseConfig, StepConfig, StoreConfig, RequestConfig, SessionConfig, AuthConfig, AuthCredentials
 from .validator import PlaybookYamlValidator
+from .template import TemplateRenderer
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
 from ..request.executor import RequestExecutor
-
-# Type aliases for template rendering
-TemplateValue = Union[str, Dict[str, Any], List[Any]]
-RenderableDict = Dict[str, TemplateValue]
 
 class Playbook:
     """Represents a playbook that can be executed."""
@@ -27,7 +27,8 @@ class Playbook:
         self.config = config
         self.logger = logger
         self.variables: Dict[str, Any] = {}
-        self._template_cache: Dict[str, Template] = {}
+        self.renderer = TemplateRenderer(logger)
+        self._temp_sessions: Dict[str, Session] = {}
 
     @classmethod
     def from_yaml(cls, yaml_content: str, logger: BaseLogger) -> 'Playbook':
@@ -51,6 +52,60 @@ class Playbook:
         """Convert the playbook to a dictionary."""
         return self.config.model_dump()
 
+    def _render_session_config(self, session_config: SessionConfig) -> SessionConfig:
+        """Render all template strings in a session configuration."""
+        rendered_data: Dict[str, Union[str, Optional[AuthConfig]]] = {
+            "base_url": self.renderer.render_template(session_config.base_url),
+        }
+        
+        if session_config.auth:
+            auth_data: Dict[str, Union[AuthType, Optional[AuthCredentials]]] = {
+                "type": session_config.auth.type,
+            }
+            
+            if session_config.auth.credentials:
+                creds = session_config.auth.credentials
+                rendered_creds: Dict[str, Union[str, List[str], None]] = {}
+                
+                # Render all credential fields that are set
+                for field in creds.model_fields:
+                    value = getattr(creds, field)
+                    if value is not None:
+                        if isinstance(value, str):
+                            rendered_creds[field] = self.renderer.render_template(value)
+                        elif isinstance(value, list):
+                            rendered_creds[field] = [
+                                self.renderer.render_template(item) if isinstance(item, str) else item
+                                for item in value
+                            ]
+                        else:
+                            rendered_creds[field] = value
+                
+                auth_data["credentials"] = AuthCredentials.model_validate(rendered_creds)
+            
+            rendered_data["auth"] = AuthConfig.model_validate(auth_data)
+        
+        return SessionConfig.model_validate(rendered_data)
+
+    def _render_request_config(self, request: RequestConfig, context: Dict[str, Any]) -> RequestConfig:
+        """Render all template strings in a request configuration."""
+        rendered_data: Dict[str, Union[str, Optional[Dict[str, Any]]]] = {
+            "method": request.method,
+            "endpoint": self.renderer.render_template(request.endpoint, context),
+            "data": self.renderer.render_dict(request.data, context) if request.data else None,
+            "params": self.renderer.render_dict(request.params, context) if request.params else None,
+            "headers": self.renderer.render_dict(request.headers, context) if request.headers else None
+        }
+        return RequestConfig.model_validate(rendered_data)
+    
+    def _render_store_config(self, store: StoreConfig, context: Dict[str, Any]) -> StoreConfig:
+        """Render all template strings in a store configuration."""
+        rendered_data: Dict[str, Union[str, Optional[str]]] = {
+            "var": self.renderer.render_template(store.var, context),
+            "jq": self.renderer.render_template(store.jq, context) if store.jq else None
+        }
+        return StoreConfig.model_validate(rendered_data)
+
     async def execute(self, session_store: SessionStore) -> None:
         """
         Execute the playbook using the provided session store.
@@ -63,12 +118,22 @@ class Playbook:
             aiohttp.ClientError: If any request fails
         """
         try:
+            # Initialize temporary sessions if configured
+            if self.config.sessions:
+                for session_name, session_config in self.config.sessions.items():
+                    rendered_config = self._render_session_config(session_config)
+                    self._temp_sessions[session_name] = Session.from_dict(session_name, rendered_config.model_dump())
+            
+            # Execute phases
             for phase in self.config.phases:
                 self.logger.log_info(f"Executing phase: {phase.name}")
                 await self._execute_phase(phase, session_store)
         except Exception as e:
             self.logger.log_error(str(e))
             raise
+        finally:
+            # Clean up temporary sessions
+            self._temp_sessions.clear()
 
     async def _execute_phase(self, phase: PhaseConfig, session_store: SessionStore) -> None:
         """Execute a single phase of the playbook."""
@@ -84,78 +149,6 @@ class Playbook:
             for step in phase.steps:
                 await self._execute_step(step, session_store)
 
-    async def _store_response_data(self, store_configs: List[StoreConfig], body: Dict[str, Any], body_str: str) -> None:
-        """Store response data using configured JQ queries."""
-        if not store_configs:
-            return
-
-        for store_config in store_configs:
-            try:
-                # Compile and execute JQ query
-                query = jq.compile(store_config.jq) if store_config.jq else jq.compile('.')
-                result = query.input(body).first()
-                
-                # Store the result
-                self.variables[store_config.var] = result
-                self.logger.log_info(f"Stored variable '{store_config.var}' = {json.dumps(result)}")
-            except Exception as e:
-                self.logger.log_error(f"Failed to store variable '{store_config.var}': {str(e)}")
-                self.logger.log_error(f"Body: {body_str}")
-                raise
-
-    def _get_template(self, template_str: str) -> Template:
-        """Get a cached template or compile and cache it."""
-        if template_str not in self._template_cache:
-            self._template_cache[template_str] = Template(str(template_str))
-        return self._template_cache[template_str]
-
-    def _render_template(self, template_str: str, context: Dict[str, Any]) -> str:
-        """Render a Jinja2 template string with the given context."""
-        try:
-            template = self._get_template(template_str)
-            return template.render(**context)
-        except Exception as e:
-            self.logger.log_error(f"Failed to render template '{template_str}': {str(e)}")
-            raise
-
-    def _render_dict(self, data: RenderableDict, context: Dict[str, Any]) -> RenderableDict:
-        """Recursively render all string values in a dictionary using Jinja2."""
-        result: RenderableDict = {}
-        for key, value in data.items():
-            if isinstance(value, str):
-                result[key] = self._render_template(value, context)
-            elif isinstance(value, dict):
-                result[key] = self._render_dict(value, context)
-            elif isinstance(value, list):
-                result[key] = [
-                    self._render_dict(item, context) if isinstance(item, dict)
-                    else self._render_template(item, context) if isinstance(item, str)
-                    else item
-                    for item in value
-                ]
-            else:
-                result[key] = value
-        return result
-
-    def _render_request_config(self, request: RequestConfig, context: Dict[str, Any]) -> RequestConfig:
-        """Render all template strings in a request configuration."""
-        rendered_data = {
-            "method": request.method,
-            "endpoint": self._render_template(request.endpoint, context),
-            "data": self._render_dict(request.data, context) if request.data else None,
-            "params": self._render_dict(request.params, context) if request.params else None,
-            "headers": self._render_dict(request.headers, context) if request.headers else None
-        }
-        return RequestConfig.model_validate(rendered_data)
-    
-    def _render_store_config(self, store: StoreConfig, context: Dict[str, Any]) -> StoreConfig:
-        """Render all template strings in a store configuration."""
-        rendered_data = {
-            "var": self._render_template(store.var, context),
-            "jq": self._render_template(store.jq, context) if store.jq else None
-        }
-        return StoreConfig.model_validate(rendered_data)
-    
     async def _execute_step(self, step: StepConfig, session_store: SessionStore) -> None:
         """Execute a single step of the playbook."""
         try:
@@ -212,7 +205,10 @@ class Playbook:
     async def _execute_single_step(self, step: StepConfig, session_store: SessionStore) -> None:
         """Execute a single step without iteration."""
         # Get session for this step
-        session = session_store.get_session(step.session)
+        if step.session in self._temp_sessions:
+            session = self._temp_sessions[step.session]
+        else:
+            session = session_store.get_session(step.session)
 
         # Create request executor with step-specific config
         executor = RequestExecutor(
@@ -248,3 +244,22 @@ class Playbook:
         except json.JSONDecodeError:
             body_str = await response.text()
         self.logger.log_body(body_str)
+
+    async def _store_response_data(self, store_configs: List[StoreConfig], body: Dict[str, Any], body_str: str) -> None:
+        """Store response data using configured JQ queries."""
+        if not store_configs:
+            return
+
+        for store_config in store_configs:
+            try:
+                # Compile and execute JQ query
+                query = jq.compile(store_config.jq) if store_config.jq else jq.compile('.')
+                result = query.input(body).first()
+                
+                # Store the result
+                self.variables[store_config.var] = result
+                self.logger.log_info(f"Stored variable '{store_config.var}' = {json.dumps(result)}")
+            except Exception as e:
+                self.logger.log_error(f"Failed to store variable '{store_config.var}': {str(e)}")
+                self.logger.log_error(f"Body: {body_str}")
+                raise
