@@ -18,9 +18,9 @@ phases:
         on_error: abort
 
   - name: "Fetch User Details"
-    parallel: true
     steps:
       - session: json-placeholder
+        parallel: true
         iterate: "user_id in users"
         request:
           method: GET
@@ -38,9 +38,9 @@ phases:
         on_error: abort
 
   - name: "Create Posts"
-    parallel: true
     steps:
       - session: json-placeholder
+        parallel: true
         iterate: "user_id in users"
         request:
           method: POST

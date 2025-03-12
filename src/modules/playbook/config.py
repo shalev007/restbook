@@ -34,6 +34,7 @@ class OnErrorConfig(str, Enum):
 class StepConfig(BaseModel):
     session: str
     iterate: Optional[str] = None
+    parallel: Optional[bool] = False  # Whether to execute iterations in parallel
     request: RequestConfig  # Use our nested model for request details.
     store: Optional[List[StoreConfig]] = None
     retry: Optional[RetryConfig] = None

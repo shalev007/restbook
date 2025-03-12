@@ -169,7 +169,8 @@ class Playbook:
                 if not isinstance(collection, (list, dict)):
                     raise ValueError(f"Cannot iterate over {type(collection)}")
 
-                # Execute step for each item in collection
+                # Create tasks for each item in collection
+                tasks = []
                 for item in (collection.items() if isinstance(collection, dict) else enumerate(collection)):
                     index, value = item
                     # Create context for template rendering
@@ -187,8 +188,17 @@ class Playbook:
                     else:
                         rendered_step.store = None
                     
-                    # Execute the rendered step
-                    await self._execute_single_step(rendered_step, session_store)
+                    # Add task for this iteration
+                    tasks.append(self._execute_single_step(rendered_step, session_store))
+
+                # Execute iterations based on parallel flag
+                if step.parallel:
+                    self.logger.log_info(f"Executing {len(tasks)} iterations in parallel")
+                    await asyncio.gather(*tasks)
+                else:
+                    self.logger.log_info(f"Executing {len(tasks)} iterations sequentially")
+                    for task in tasks:
+                        await task
             else:
                 # Execute step directly if no iteration is configured
                 await self._execute_single_step(step, session_store)
