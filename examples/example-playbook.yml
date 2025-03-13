@@ -1,3 +1,6 @@
+sessions:
+  json-placeholder:
+    base_url: "https://jsonplaceholder.typicode.com"
 phases:
   - name: "Initialization"
     steps:
