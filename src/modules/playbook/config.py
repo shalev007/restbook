@@ -3,7 +3,7 @@ from enum import Enum
 from typing import List, Dict, Any
 
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 class MethodConfig(str, Enum):
     GET = "GET"
@@ -75,6 +75,24 @@ class PhaseConfig(BaseModel):
     parallel: Optional[bool] = False  # Default to sequential execution.
     steps: List[StepConfig]
 
+class IncrementalStoreType(str, Enum):
+    FILE = "file"
+
+class IncrementalConfig(BaseModel):
+    enabled: bool = False
+    store: IncrementalStoreType = IncrementalStoreType.FILE
+    file_path: Optional[str] = None
+
+    @model_validator(mode='after')
+    def validate_file_store(self) -> 'IncrementalConfig':
+        """Validate the file store configuration."""
+        if not self.enabled:
+            return self
+        if self.store == IncrementalStoreType.FILE and not self.file_path:
+            raise ValueError("file_path is required when store type is 'file'")
+        return self
+
 class PlaybookConfig(BaseModel):
     sessions: Optional[Dict[str, SessionConfig]] = None  # Make sessions optional
     phases: List[PhaseConfig]
+    incremental: Optional[IncrementalConfig] = IncrementalConfig()  # Default to disabled

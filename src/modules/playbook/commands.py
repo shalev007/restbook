@@ -19,8 +19,9 @@ def create_playbook_commands() -> click.Command:
 
     @playbook.command(name='run')
     @click.argument('playbook_file', type=click.File('r'), required=False)
+    @click.option('--no-resume', is_flag=True, help='Do not resume from checkpoint')
     @click.pass_context
-    def run(ctx, playbook_file: Optional[TextIO]):
+    def run(ctx, playbook_file: Optional[TextIO], no_resume: bool):
         """Execute a YAML playbook from a file or stdin.
         
         If no file is specified, reads from stdin.
@@ -36,8 +37,16 @@ def create_playbook_commands() -> click.Command:
             else:
                 content = playbook_file.read()
 
-            # Parse and execute the playbook with logging
+            # Parse the playbook
             playbook = Playbook.from_yaml(content, logger=logger)
+            
+            # Disable incremental execution if --no-resume is specified
+            if no_resume and playbook.config.incremental and playbook.config.incremental.enabled:
+                playbook.checkpoint_store = None
+                playbook.content_hash = None
+                logger.log_info("Checkpoint resume disabled")
+                
+            # Execute the playbook
             asyncio.run(playbook.execute(session_store))
 
         except ValueError as err:

@@ -1,0 +1,66 @@
+incremental:
+  enabled: true
+  store: file
+  file_path: "."
+
+sessions:
+  json-placeholder:
+    base_url: "https://jsonplaceholder.typicode.com"
+phases:
+  - name: "Initialization"
+    steps:
+      - session: json-placeholder
+        request:
+          method: GET
+          endpoint: "/users"
+          headers:
+            Accept: "application/json"
+        store:
+          - var: "users"
+            jq: "map(.id)"
+        retry:
+          max_retries: 3
+          backoff_factor: 1.0
+          timeout: 10
+        validate_ssl: true
+        on_error: abort
+
+  - name: "Fetch User Details"
+    steps:
+      - session: json-placeholder
+        iterate: "user_id in users"
+        request:
+          method: GET
+          endpoint: "/users/{{ user_id }}"
+          params:
+            details: "full"
+        store:
+          - var: "user_{{ user_id }}_details"
+            jq: "."
+        retry:
+          max_retries: 2
+          backoff_factor: 0.5
+          timeout: 5
+        validate_ssl: true
+        on_error: abort
+
+  - name: "Create Posts"
+    steps:
+      - session: json-placeholder
+        iterate: "user_id in users"
+        request:
+          method: POST
+          endpoint: "/posts"
+          data:
+            title: "Post by user {{ user_id }}"
+            body: "This is a test post for user {{ user_id }}."
+            userId: "{{ user_id }}"
+        store:
+          - var: "post_{{ user_id }}_id"
+            jq: ".id"
+        retry:
+          max_retries: 3
+          backoff_factor: 1.0
+          timeout: 10
+        validate_ssl: true
+        on_error: ignore
