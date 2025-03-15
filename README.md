@@ -1,4 +1,4 @@
-![Logo](https://github.com/user-attachments/assets/04bb33e2-0530-471e-ae9b-5e3c155c0f4a)
+![restbook-logo2](https://github.com/user-attachments/assets/1f22790b-8829-4cae-a33f-3d499cfc1ea3)
 
 # RestBook
 
