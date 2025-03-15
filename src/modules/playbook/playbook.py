@@ -162,9 +162,10 @@ class Playbook:
     
     def _render_store_config(self, store: StoreConfig, context: Dict[str, Any]) -> StoreConfig:
         """Render all template strings in a store configuration."""
-        rendered_data: Dict[str, Union[str, Optional[str]]] = {
+        rendered_data: Dict[str, Union[str, Optional[str], bool]] = {
             "var": self.renderer.render_template(store.var, context),
-            "jq": self.renderer.render_template(store.jq, context) if store.jq else None
+            "jq": self.renderer.render_template(store.jq, context) if store.jq else None,
+            "append": store.append
         }
         return StoreConfig.model_validate(rendered_data)
 
@@ -361,9 +362,26 @@ class Playbook:
                 query = jq.compile(store_config.jq) if store_config.jq else jq.compile('.')
                 result = query.input(body).first()
                 
-                # Store the result
-                self.variables[store_config.var] = result
-                self.logger.log_info(f"Stored variable '{store_config.var}' = {json.dumps(result)}")
+                # Handle append mode
+                if store_config.append:
+                    if store_config.var not in self.variables:
+                        # Initialize as a new list
+                        self.variables[store_config.var] = [result]
+                        self.logger.log_info(f"Created list variable '{store_config.var}' with first item")
+                    else:
+                        # Ensure it's a list
+                        if not isinstance(self.variables[store_config.var], list):
+                            # Convert existing value to a list with the original value as first item
+                            self.variables[store_config.var] = [self.variables[store_config.var]]
+                            self.logger.log_info(f"Converted '{store_config.var}' to list")
+                        
+                        # Append the new result
+                        self.variables[store_config.var].append(result)
+                        self.logger.log_info(f"Appended to list variable '{store_config.var}', now has {len(self.variables[store_config.var])} items")
+                else:
+                    # Normal replacement mode
+                    self.variables[store_config.var] = result
+                    self.logger.log_info(f"Stored variable '{store_config.var}' = {json.dumps(result)}")
             except Exception as e:
                 self.logger.log_error(f"Failed to store variable '{store_config.var}': {str(e)}")
                 self.logger.log_error(f"Body: {body_str}")
