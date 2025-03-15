@@ -50,6 +50,7 @@ class RequestConfig(BaseModel):
 class StoreConfig(BaseModel):
     var: str
     jq: Optional[str] = None  # JQ query to extract data from response
+    append: bool = False  # If true, append to list instead of replacing value
 
 class RetryConfig(BaseModel):
     max_retries: Optional[int] = 3
