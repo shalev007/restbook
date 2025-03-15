@@ -1,3 +1,5 @@
+![Logo](https://github.com/user-attachments/assets/04bb33e2-0530-471e-ae9b-5e3c155c0f4a)
+
 # RestBook
 
 RestBook is a powerful, declarative tool for executing complex REST API workflows using YAML playbooks. It supports parallel execution, variable storage, response processing with JQ, and templating with Jinja2.
