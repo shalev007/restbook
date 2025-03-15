@@ -10,6 +10,7 @@ from .config import AuthType, PlaybookConfig, PhaseConfig, StepConfig, StoreConf
 from .validator import PlaybookYamlValidator
 from .template import TemplateRenderer
 from .checkpoint import CheckpointStore, CheckpointData, create_checkpoint_store
+from .variables import VariableManager
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
 from ..request.executor import RequestExecutor
@@ -27,7 +28,7 @@ class Playbook:
         """
         self.config = config
         self.logger = logger
-        self.variables: Dict[str, Any] = {}
+        self.variables = VariableManager(logger)
         self.renderer = TemplateRenderer(logger)
         self._temp_sessions: Dict[str, Session] = {}
         
@@ -56,7 +57,7 @@ class Playbook:
             checkpoint = CheckpointData(
                 current_phase=phase_index,
                 current_step=step_index,
-                variables=self.variables,
+                variables=self.variables.get_all(),
                 content_hash=self.content_hash
             )
             
@@ -75,7 +76,7 @@ class Playbook:
             if checkpoint:
                 self.logger.log_info(f"Checkpoint loaded: Phase {checkpoint.current_phase}, Step {checkpoint.current_step}")
                 # Restore variables
-                self.variables = checkpoint.variables
+                self.variables.set_all(checkpoint.variables)
             return checkpoint
         except Exception as e:
             self.logger.log_error(f"Failed to load checkpoint: {str(e)}")
@@ -116,8 +117,11 @@ class Playbook:
 
     def _render_session_config(self, session_config: SessionConfig) -> SessionConfig:
         """Render all template strings in a session configuration."""
+        # Get variables for template context
+        context = self.variables.get_all()
+        
         rendered_data: Dict[str, Union[str, Optional[AuthConfig]]] = {
-            "base_url": self.renderer.render_template(session_config.base_url),
+            "base_url": self.renderer.render_template(session_config.base_url, context),
         }
         
         if session_config.auth:
@@ -134,10 +138,10 @@ class Playbook:
                     value = getattr(creds, field)
                     if value is not None:
                         if isinstance(value, str):
-                            rendered_creds[field] = self.renderer.render_template(value)
+                            rendered_creds[field] = self.renderer.render_template(value, context)
                         elif isinstance(value, list):
                             rendered_creds[field] = [
-                                self.renderer.render_template(item) if isinstance(item, str) else item
+                                self.renderer.render_template(item, context) if isinstance(item, str) else item
                                 for item in value
                             ]
                         else:
@@ -149,8 +153,11 @@ class Playbook:
         
         return SessionConfig.model_validate(rendered_data)
 
-    def _render_request_config(self, request: RequestConfig, context: Dict[str, Any]) -> RequestConfig:
+    def _render_request_config(self, request: RequestConfig, step_context: Dict[str, Any]) -> RequestConfig:
         """Render all template strings in a request configuration."""
+        # Merge step context with global variables
+        context = {**self.variables.get_all(), **step_context}
+        
         rendered_data: Dict[str, Union[str, Optional[Dict[str, Any]]]] = {
             "method": request.method,
             "endpoint": self.renderer.render_template(request.endpoint, context),
@@ -160,8 +167,11 @@ class Playbook:
         }
         return RequestConfig.model_validate(rendered_data)
     
-    def _render_store_config(self, store: StoreConfig, context: Dict[str, Any]) -> StoreConfig:
+    def _render_store_config(self, store: StoreConfig, step_context: Dict[str, Any]) -> StoreConfig:
         """Render all template strings in a store configuration."""
+        # Merge step context with global variables
+        context = {**self.variables.get_all(), **step_context}
+        
         rendered_data: Dict[str, Union[str, Optional[str], bool]] = {
             "var": self.renderer.render_template(store.var, context),
             "jq": self.renderer.render_template(store.jq, context) if store.jq else None,
@@ -261,10 +271,10 @@ class Playbook:
             if step.iterate:
                 # Parse iteration configuration
                 var_name, collection_name = [x.strip() for x in step.iterate.split(" in ")]
-                if collection_name not in self.variables:
+                if not self.variables.has(collection_name):
                     raise ValueError(f"Iteration variable '{collection_name}' not found")
                 
-                collection = self.variables[collection_name]
+                collection = self.variables.get(collection_name)
                 if not isinstance(collection, (list, dict)):
                     raise ValueError(f"Cannot iterate over {type(collection)}")
 
@@ -274,7 +284,7 @@ class Playbook:
                     index, value = item
                     # Create context for template rendering
                     context = {
-                        **self.variables,
+                        **self.variables.get_all(),
                         var_name: value,
                         f"{var_name}_index": index
                     }
@@ -342,7 +352,7 @@ class Playbook:
             # Store response data if configured
             if step.store:
                 try:
-                    await self._store_response_data(step.store, body, body_str)
+                    await self.variables.store_response_data(step.store, body)
                 except Exception as e:
                     if step.on_error != "ignore":
                         raise
@@ -350,39 +360,3 @@ class Playbook:
         except json.JSONDecodeError:
             body_str = await response.text()
         self.logger.log_body(body_str)
-
-    async def _store_response_data(self, store_configs: List[StoreConfig], body: Dict[str, Any], body_str: str) -> None:
-        """Store response data using configured JQ queries."""
-        if not store_configs:
-            return
-
-        for store_config in store_configs:
-            try:
-                # Compile and execute JQ query
-                query = jq.compile(store_config.jq) if store_config.jq else jq.compile('.')
-                result = query.input(body).first()
-                
-                # Handle append mode
-                if store_config.append:
-                    if store_config.var not in self.variables:
-                        # Initialize as a new list
-                        self.variables[store_config.var] = [result]
-                        self.logger.log_info(f"Created list variable '{store_config.var}' with first item")
-                    else:
-                        # Ensure it's a list
-                        if not isinstance(self.variables[store_config.var], list):
-                            # Convert existing value to a list with the original value as first item
-                            self.variables[store_config.var] = [self.variables[store_config.var]]
-                            self.logger.log_info(f"Converted '{store_config.var}' to list")
-                        
-                        # Append the new result
-                        self.variables[store_config.var].append(result)
-                        self.logger.log_info(f"Appended to list variable '{store_config.var}', now has {len(self.variables[store_config.var])} items")
-                else:
-                    # Normal replacement mode
-                    self.variables[store_config.var] = result
-                    self.logger.log_info(f"Stored variable '{store_config.var}' = {json.dumps(result)}")
-            except Exception as e:
-                self.logger.log_error(f"Failed to store variable '{store_config.var}': {str(e)}")
-                self.logger.log_error(f"Body: {body_str}")
-                raise
