@@ -4,6 +4,17 @@
 
 RestBook is a powerful, declarative tool for executing complex REST API workflows using YAML playbooks. It supports parallel execution, variable storage, response processing with JQ, and templating with Jinja2.
 
+## What Makes RestBook Different
+
+RestBook is not a tool to test your APIs—it's an orchestration tool for complex API workflows. While tools like Postman, Insomnia, or curl focus on individual requests or basic testing, RestBook is distinct in that it's designed to orchestrate complex API workflows (including authentication, error handling, incremental execution, and variable storage) entirely through declarative YAML playbooks.
+
+This combination of features—especially the incremental execution, OAuth2 integrations, and recording/playbook generation—sets it apart from other API tools. RestBook excels at:
+
+- **Complex Workflow Orchestration**: Chain multiple API calls with sophisticated logic
+- **Incremental Execution**: Resume from the last successful step after failures
+- **State Management**: Maintain and transform state between requests
+- **Enterprise Integration**: Advanced auth flows and security features
+
 ## Features
 
 - **YAML-Based Playbooks**: Define your API workflows in simple, readable YAML files
@@ -214,6 +225,31 @@ steps:
         email: "{{ user.email }}"
 ```
 
+You can also append to list variables across multiple steps:
+
+```yaml
+steps:
+  - session: "api"
+    request:
+      method: GET
+      endpoint: "/users/page/1"
+    store:
+      - var: "all_users"
+        jq: ".users"
+        append: true  # Creates a new list
+
+  - session: "api"
+    request:
+      method: GET
+      endpoint: "/users/page/2"
+    store:
+      - var: "all_users"
+        jq: ".users"
+        append: true  # Appends to existing list
+```
+
+This is useful for collecting data across paginated API responses or from different endpoints for later processing.
+
 ### Error Handling
 
 Configure how errors are handled:
@@ -230,6 +266,25 @@ steps:
       timeout: 10
     on_error: ignore  # Continue on error
 ```
+
+### Incremental Execution
+
+RestBook supports incremental execution, allowing playbooks to resume from the last successful step after a failure:
+
+```yaml
+incremental:
+  enabled: true
+  store: file
+  file_path: "/path/to/checkpoints"
+```
+
+With incremental execution:
+- Checkpoints are saved after each successful step
+- Playbooks can resume execution from the last checkpoint
+- All variables and state are preserved
+- You can disable resume with the `--no-resume` flag
+
+This is particularly valuable for long-running workflows where a failure halfway through would otherwise require starting from the beginning.
 
 ## Using in CI/CD
 

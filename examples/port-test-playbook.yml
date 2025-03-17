@@ -1,7 +1,0 @@
-phases:
-  - name: Test
-    steps:
-      - session: port-local
-        request:
-          method: GET
-          endpoint: /blueprints/githubPullRequest/entities/test-repo-7502196749310
