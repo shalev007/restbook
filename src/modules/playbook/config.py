@@ -44,8 +44,16 @@ class RequestConfig(BaseModel):
     method: MethodConfig = MethodConfig.GET  # Defaults to GET if not provided.
     endpoint: str
     data: Optional[Dict[str, Any]] = None
+    fromFile: Optional[str] = None  # Path to JSON file containing request data
     params: Optional[Dict[str, Any]] = None
     headers: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode='after')
+    def validate_data_sources(self) -> 'RequestConfig':
+        """Validate that only one data source is specified."""
+        if self.data is not None and self.fromFile is not None:
+            raise ValueError("Cannot specify both 'data' and 'fromFile' in the same request")
+        return self
 
 class StoreConfig(BaseModel):
     var: str

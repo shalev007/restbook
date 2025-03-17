@@ -1,5 +1,6 @@
 import json
 import hashlib
+import os
 from typing import Dict, Any, Optional, List, Union
 import asyncio
 import jq  # type: ignore
@@ -158,12 +159,45 @@ class Playbook:
         # Merge step context with global variables
         context = {**self.variables.get_all(), **step_context}
         
+        # Handle loading data from file if specified
+        data = None
+        if request.fromFile:
+            # Render the file path with variables/templates
+            file_path = self.renderer.render_template(request.fromFile, context)
+            
+            # Support both absolute paths and paths relative to the working directory
+            if not os.path.isabs(file_path):
+                file_path = os.path.join(os.getcwd(), file_path)
+                
+            try:
+                # Read and parse the JSON file
+                with open(file_path, 'r') as f:
+                    file_content = f.read()
+                    
+                # Parse the file content as JSON
+                data = json.loads(file_content)
+                
+                # Render templates in the loaded data
+                data = self.renderer.render_dict(data, context)
+                self.logger.log_info(f"Loaded request data from file: {file_path}")
+            except FileNotFoundError:
+                raise ValueError(f"Request data file not found: {file_path}")
+            except json.JSONDecodeError:
+                raise ValueError(f"Invalid JSON in request data file: {file_path}")
+            except Exception as e:
+                raise ValueError(f"Error loading request data from file {file_path}: {str(e)}")
+        else:
+            # Use inline data if specified
+            data = self.renderer.render_dict(request.data, context) if request.data else None
+        
         rendered_data: Dict[str, Union[str, Optional[Dict[str, Any]]]] = {
             "method": request.method,
             "endpoint": self.renderer.render_template(request.endpoint, context),
-            "data": self.renderer.render_dict(request.data, context) if request.data else None,
+            "data": data,
             "params": self.renderer.render_dict(request.params, context) if request.params else None,
-            "headers": self.renderer.render_dict(request.headers, context) if request.headers else None
+            "headers": self.renderer.render_dict(request.headers, context) if request.headers else None,
+            # Don't include fromFile in the rendered config
+            "fromFile": None
         }
         return RequestConfig.model_validate(rendered_data)
     
