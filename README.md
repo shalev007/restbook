@@ -323,4 +323,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-[License Type] - See LICENSE file for details
+[License Type] - MIT
