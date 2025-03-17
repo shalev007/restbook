@@ -2,18 +2,7 @@
 
 # RestBook
 
-RestBook is a powerful, declarative tool for executing complex REST API workflows using YAML playbooks. It supports parallel execution, variable storage, response processing with JQ, and templating with Jinja2.
-
-## What Makes RestBook Different
-
-RestBook is not a tool to test your APIs—it's an orchestration tool for complex API workflows. While tools like Postman, Insomnia, or curl focus on individual requests or basic testing, RestBook is distinct in that it's designed to orchestrate complex API workflows (including authentication, error handling, incremental execution, and variable storage) entirely through declarative YAML playbooks.
-
-This combination of features—especially the incremental execution, OAuth2 integrations, and recording/playbook generation—sets it apart from other API tools. RestBook excels at:
-
-- **Complex Workflow Orchestration**: Chain multiple API calls with sophisticated logic
-- **Incremental Execution**: Resume from the last successful step after failures
-- **State Management**: Maintain and transform state between requests
-- **Enterprise Integration**: Advanced auth flows and security features
+RestBook is a powerful API request orchestration tool that lets you define and execute complex REST API workflows using declarative YAML playbooks. Unlike API testing tools, RestBook **isn’t about testing** endpoints one by one—it’s designed to chain together multiple API calls, manage state between requests, and even resume workflows after failures. With features like parallel execution, incremental execution, advanced authentication (including OAuth2), and recording capabilities, RestBook is built for automation and enterprise-grade integrations.
 
 ## Features
 
