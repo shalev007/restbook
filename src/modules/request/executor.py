@@ -1,7 +1,7 @@
 import json
 import asyncio
 import aiohttp
-from typing import Optional, Dict, Any, NoReturn
+from typing import Optional, Dict, Any, NoReturn, List
 from aiohttp import ClientTimeout
 from ..logging import BaseLogger
 from ..session.session import Session
@@ -9,6 +9,12 @@ from ..session.session import Session
 
 class RequestExecutor:
     """Handles HTTP request execution and response processing."""
+    
+    # Status codes that should trigger retries
+    RETRY_STATUS_CODES: List[int] = [429, 500, 502, 503, 504]
+    
+    # Status codes that might indicate auth issues
+    AUTH_STATUS_CODES: List[int] = [401, 403]
     
     def __init__(
         self,
@@ -36,10 +42,6 @@ class RequestExecutor:
         # Configure timeout
         self.client_timeout = ClientTimeout(total=timeout)
 
-    def _raise_error(self, err: Exception) -> NoReturn:
-        """Helper method to raise errors."""
-        raise err
-
     async def execute_request(
         self,
         method: str,
@@ -59,10 +61,10 @@ class RequestExecutor:
             aiohttp.ClientResponse: The response from the server
             
         Raises:
-            aiohttp.ClientError: If the request fails
+            aiohttp.ClientError: If the request fails after max retries
         """
         # Prepare the request
-        url = f"{self.session.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+        url = self._build_url(endpoint)
         
         # Create client session with retry logic
         async with aiohttp.ClientSession(timeout=self.client_timeout) as client:
@@ -84,36 +86,35 @@ class RequestExecutor:
                     await response.read()
                     
                     # Handle authentication errors
-                    if response.status == 401 and attempt < self.max_retries:
-                        try:
-                            # Try to refresh first
-                            await self.session.refresh_auth()
+                    if response.status in self.AUTH_STATUS_CODES and attempt < self.max_retries:
+                        if await self._handle_auth_retry():
                             continue
-                        except Exception:
-                            # If refresh fails, try re-authenticating
-                            try:
-                                await self.session.authenticate()
-                                continue
-                            except Exception:
-                                # Both refresh and re-auth failed
-                                pass
                     
                     # Check if we should retry other errors
-                    if response.status in [429, 500, 502, 503, 504] and attempt < self.max_retries:
-                        delay = self.backoff_factor * (2 ** attempt)
-                        await asyncio.sleep(delay)
+                    if response.status in self.RETRY_STATUS_CODES and attempt < self.max_retries:
+                        await self._handle_retry_delay(attempt)
                         continue
                     
                     return response
                     
                 except aiohttp.ClientError as err:
                     if attempt < self.max_retries:
-                        delay = self.backoff_factor * (2 ** attempt)
-                        await asyncio.sleep(delay)
+                        await self._handle_retry_delay(attempt)
                         continue
                     raise err
 
             raise aiohttp.ClientError("Max retries exceeded")
+
+    def _build_url(self, endpoint: str) -> str:
+        """Build the full URL for the request.
+        
+        Args:
+            endpoint: API endpoint path
+            
+        Returns:
+            str: Full URL including base URL and endpoint
+        """
+        return f"{self.session.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
 
     async def _prepare_headers(self, headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         """Prepare request headers.
@@ -132,8 +133,46 @@ class RequestExecutor:
             request_headers.update(headers)
         return request_headers
 
+    async def _handle_auth_retry(self) -> bool:
+        """Handle authentication retry logic.
+        
+        Returns:
+            bool: True if retry should continue, False otherwise
+        """
+        try:
+            # Try to refresh first
+            await self.session.refresh_auth()
+            return True
+        except Exception:
+            # If refresh fails, try re-authenticating
+            try:
+                await self.session.authenticate()
+                return True
+            except Exception:
+                # Both refresh and re-auth failed
+                return False
+
+    async def _handle_retry_delay(self, attempt: int) -> None:
+        """Handle exponential backoff delay between retries.
+        
+        Args:
+            attempt: Current retry attempt number
+        """
+        delay = self.backoff_factor * (2 ** attempt)
+        await asyncio.sleep(delay)
+
     def _prepare_data(self, data: Optional[str]) -> Optional[Dict[str, Any]]:
-        """Prepare request data."""
+        """Prepare request data.
+        
+        Args:
+            data: JSON string to convert to dictionary
+            
+        Returns:
+            Optional[Dict[str, Any]]: Parsed JSON data as dictionary
+            
+        Raises:
+            ValueError: If data is not valid JSON
+        """
         if not data:
             return None
         try:
