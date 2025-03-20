@@ -11,8 +11,7 @@ class Session:
     name: str
     base_url: str
     auth_config: Optional[AuthConfig] = None
-    swagger_path: Optional[str] = None
-    swagger_url: Optional[str] = None
+    swagger_spec_path: Optional[str] = None
     
     def __post_init__(self):
         """Initialize the authenticator if auth config is provided."""
@@ -56,11 +55,11 @@ class Session:
 
     def has_swagger(self) -> bool:
         """Check if the session has a Swagger specification."""
-        return bool(self.swagger_path or self.swagger_url)
+        return bool(self.swagger_spec_path)
 
     def get_swagger_source(self) -> Optional[str]:
-        """Get the source of the Swagger specification."""
-        return self.swagger_path or self.swagger_url
+        """Get the path to the Swagger specification."""
+        return self.swagger_spec_path
 
     @classmethod
     def from_dict(cls, name: str, data: Dict[str, Any]) -> 'Session':
@@ -76,8 +75,7 @@ class Session:
             name=name,
             base_url=data['base_url'],
             auth_config=auth_config,
-            swagger_path=data.get('swagger_path'),
-            swagger_url=data.get('swagger_url')
+            swagger_spec_path=data.get('swagger_spec_path')
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -91,8 +89,6 @@ class Session:
                 'type': self.auth_config.type,
                 'credentials': self.auth_config.credentials
             }
-        if self.swagger_path:
-            data['swagger_path'] = self.swagger_path
-        if self.swagger_url:
-            data['swagger_url'] = self.swagger_url
+        if self.swagger_spec_path:
+            data['swagger_spec_path'] = self.swagger_spec_path
         return data
