@@ -7,7 +7,6 @@ from .session_store import SessionStore
 from ..swagger.parser import SwaggerParser, SwaggerParserError
 from ..swagger.schema import SwaggerSpec
 
-
 def create_session_commands() -> click.Group:
     """Create the session command group."""
     
@@ -105,7 +104,7 @@ def create_session_commands() -> click.Group:
         except Exception as e:
             logger.log_error(str(e))
 
-    @session.command()
+    @session.command(name='import-swagger')
     @click.argument('name')
     @click.argument('source')
     @click.option('--validate/--no-validate', default=True, help='Validate the Swagger specification')
@@ -127,7 +126,6 @@ def create_session_commands() -> click.Group:
             source_type = 'url' if is_url else 'file'
             
             logger.log_info(f"Importing Swagger specification from {source_type}: {source}")
-            
             # Parse specification
             parser = SwaggerParser()
             spec = parser.parse(source)
@@ -141,10 +139,12 @@ def create_session_commands() -> click.Group:
                     logger.log_error(f"Invalid Swagger specification: {str(e)}")
                     return
             
+            # Save parsed spec to file using the parser's method
+            spec_path = parser.save_swagger_spec(spec, name)
+            logger.log_info(f"Saved Swagger specification to {spec_path}")
+            
             # Update session
-            session.swagger_url = source if is_url else None
-            session.swagger_path = source if not is_url else None
-            # session.swagger_spec = spec
+            session.swagger_spec_path = spec_path
             
             # Save session
             session_store.upsert_session(name, json.dumps(session.to_dict()), overwrite=True)
@@ -228,10 +228,9 @@ def create_session_commands() -> click.Group:
                 }
             
             # Preserve Swagger references
-            if current_session.swagger_path:
-                session_data['swagger_path'] = current_session.swagger_path
-            if current_session.swagger_url:
-                session_data['swagger_url'] = current_session.swagger_url
+            if current_session.swagger_spec_path:
+                session_data['swagger_spec_path'] = current_session.swagger_spec_path
+            
             
             # Delete old session if name is changing
             if new_name:
@@ -287,10 +286,7 @@ def create_session_commands() -> click.Group:
             
             if session.has_swagger():
                 logger.log_info("\nSwagger/OpenAPI:")
-                if session.swagger_path:
-                    logger.log_info(f"  Local file: {session.swagger_path}")
-                if session.swagger_url:
-                    logger.log_info(f"  URL: {session.swagger_url}")
+                logger.log_info(f"  Specification: {session.get_swagger_source()}")
                     
         except Exception as e:
             logger.log_error(str(e))

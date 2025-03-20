@@ -4,7 +4,9 @@ import os
 import json
 import yaml
 import requests
-from typing import Dict, List, Any, Optional, Tuple
+import uuid
+from pathlib import Path
+from typing import Dict, List, Any
 from urllib.parse import urlparse
 
 from .schema import (
@@ -147,7 +149,7 @@ class SwaggerParser:
             title=title,
             version=version,
             description=description,
-            spec_type=spec_type,
+            spec_type=SwaggerSpecType(spec_type),
             endpoints=endpoints,
             paths=paths_data,
             definitions=definitions,
@@ -221,7 +223,8 @@ class SwaggerParser:
                     # In Swagger 2.0, the request body is defined in parameters with "in: body"
                     body_params = [p for p in parameters if p.in_location == 'body']
                     if body_params:
-                        request_body = {'schema': body_params[0].schema}
+                        # Access the actual field directly to avoid the property method
+                        request_body = {'schema': body_params[0].param_schema}
                 else:
                     # In OpenAPI 3.0, the request body is defined separately
                     request_body = operation.get('requestBody')
@@ -317,4 +320,29 @@ class SwaggerParser:
             
             parameters.append(parameter)
             
-        return parameters 
+        return parameters
+        
+    def save_swagger_spec(self, spec: SwaggerSpec, name: str) -> str:
+        """
+        Save Swagger spec to a file and return its path.
+        
+        Args:
+            spec: The SwaggerSpec to save
+            name: Name to use in the filename
+            
+        Returns:
+            str: Path to the saved spec file
+        """
+        swagger_dir = Path.home() / '.restbook' / 'swagger'
+        swagger_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate unique filename using session name and uuid
+        filename = f"{name}-{uuid.uuid4()}.json"
+        filepath = swagger_dir / filename
+        
+        json_spec = spec.model_dump()
+        # Save spec as JSON
+        with open(filepath, 'w') as f:
+            f.write(json.dumps(json_spec, indent=2))
+            
+        return str(filepath) 
