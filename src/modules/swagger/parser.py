@@ -340,9 +340,8 @@ class SwaggerParser:
         filename = f"{name}-{uuid.uuid4()}.json"
         filepath = swagger_dir / filename
         
-        json_spec = spec.model_dump()
-        # Save spec as JSON
+        # Save spec as JSON using Pydantic's built-in JSON serialization
         with open(filepath, 'w') as f:
-            f.write(json.dumps(json_spec, indent=2))
+            f.write(spec.model_dump_json(indent=2))
             
         return str(filepath) 
