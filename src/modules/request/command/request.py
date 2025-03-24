@@ -12,8 +12,7 @@ from prompt_toolkit.history import InMemoryHistory
 from ...logging import BaseLogger
 from ...session.session_store import SessionStore
 from ...session.session import Session
-from ...swagger.schema import SwaggerSpec, SwaggerEndpoint
-from ...session.swagger import SwaggerClient
+from ...session.swagger.client import SwaggerClient
 from ..executor import RequestExecutor
 
 

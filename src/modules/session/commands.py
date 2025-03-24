@@ -4,8 +4,7 @@ import asyncio
 from typing import Dict, Any
 from ..logging import BaseLogger
 from .session_store import SessionStore
-from ..swagger.parser import SwaggerParser, SwaggerParserError
-from ..swagger.schema import SwaggerSpec
+from .swagger import SwaggerParser, SwaggerParserError, SwaggerSpec
 
 def create_session_commands() -> click.Group:
     """Create the session command group."""

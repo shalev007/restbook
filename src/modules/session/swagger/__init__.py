@@ -1,13 +1,33 @@
-"""Swagger client functionality."""
+"""Swagger/OpenAPI integration for RestBook."""
 
-from .base import SwaggerClient
-from .swagger2 import Swagger2Client
-from .openapi3 import OpenAPI3Client
-from .factory import SwaggerClientFactory
+from .parser import SwaggerParser, SwaggerParserError
+from .schema import (
+    SwaggerSpec,
+    SwaggerEndpoint,
+    SwaggerEndpointParameter,
+    SwaggerSpecType
+)
+from .client import (
+    SwaggerClient,
+    Swagger2Client,
+    OpenAPI3Client,
+    SwaggerClientFactory
+)
 
 __all__ = [
-    'SwaggerClient', 
-    'Swagger2Client', 
-    'OpenAPI3Client',
-    'SwaggerClientFactory'
+    # Parser
+    "SwaggerParser",
+    "SwaggerParserError",
+    
+    # Schema
+    "SwaggerSpec",
+    "SwaggerEndpoint",
+    "SwaggerEndpointParameter",
+    "SwaggerSpecType",
+    
+    # Client
+    "SwaggerClient",
+    "Swagger2Client",
+    "OpenAPI3Client",
+    "SwaggerClientFactory"
 ] 

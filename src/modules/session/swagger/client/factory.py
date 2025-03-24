@@ -1,12 +1,12 @@
 """Factory for creating Swagger clients."""
 
-from typing import Optional, Dict, Any, List, Union, cast
+from typing import Optional
 import os
 import json
 import logging
 
-from ...swagger.schema import SwaggerSpec, SwaggerSpecType, SwaggerEndpoint, SwaggerEndpointParameter
-from ...swagger.parser import SwaggerParser, SwaggerParserError
+from ..schema import SwaggerSpec, SwaggerSpecType, SwaggerEndpoint, SwaggerEndpointParameter
+from ..parser import SwaggerParser, SwaggerParserError
 
 from .base import SwaggerClient
 from .swagger2 import Swagger2Client

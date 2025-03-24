@@ -3,7 +3,7 @@
 import json
 from typing import Dict, List, Optional, Any, Tuple, cast
 
-from ...swagger.schema import SwaggerSpec, SwaggerSpecType, SwaggerEndpoint
+from ..schema import SwaggerSpec, SwaggerSpecType, SwaggerEndpoint
 from .base import SwaggerClient
 
 
