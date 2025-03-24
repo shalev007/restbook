@@ -1,16 +1,59 @@
 import asyncio
 import json
 import click
-from typing import Optional, Dict, Any, List
+import os
+from typing import Optional, Dict, Any, List, Tuple
 
 from prompt_toolkit import prompt
-from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.completion import WordCompleter, Completer, Completion
+from prompt_toolkit.document import Document
 from prompt_toolkit.history import InMemoryHistory
 
 from ...logging import BaseLogger
 from ...session.session_store import SessionStore
 from ...session.session import Session
+from ...swagger.schema import SwaggerSpec, SwaggerEndpoint
+from ...session.swagger import SwaggerClient
 from ..executor import RequestExecutor
+
+
+class EndpointCompleter(Completer):
+    """Completer for API endpoints based on Swagger spec."""
+    
+    def __init__(self, swagger_client: SwaggerClient, method: Optional[str] = None):
+        """
+        Initialize the endpoint completer.
+        
+        Args:
+            swagger_client: Swagger client
+            method: If provided, only show endpoints for this HTTP method
+        """
+        self.swagger_client = swagger_client
+        self.method = method
+        self.endpoints = swagger_client.get_available_endpoints(method)
+        
+    def get_completions(self, document: Document, complete_event):
+        """Get completions for the current input."""
+        word = document.text
+        
+        for endpoint in self.endpoints:
+            path = endpoint['path']
+            summary = endpoint.get('summary')
+            
+            # Get display text with path and description
+            display = path
+            if summary:
+                display = f"{path} - {summary}"
+                
+            # Calculate similarity or match
+            if word.lower() in path.lower():
+                # Higher score for exact path starts
+                yield Completion(
+                    path,
+                    start_position=-len(word),
+                    display=display,
+                    display_meta=endpoint['method']
+                )
 
 
 class RequestCommand:
@@ -190,11 +233,14 @@ class RequestCommand:
         data_history = InMemoryHistory()
         headers_history = InMemoryHistory()
         
-        # Check if session has swagger for better completion
-        has_swagger = session.has_swagger()
-        if has_swagger:
-            self.logger.log_info("Using Swagger specification for endpoint suggestions")
-            # TODO: Implement Swagger-based completion
+        # Get Swagger client if available
+        swagger_client = session.swagger_client
+        endpoint_completer = None
+        
+        if swagger_client:
+            self.logger.log_info(f"Using Swagger specification: {swagger_client.api_title} {swagger_client.api_version}")
+            if swagger_client.api_description:
+                self.logger.log_info(swagger_client.api_description)
         
         while True:
             # Get method
@@ -212,11 +258,18 @@ class RequestCommand:
             except KeyboardInterrupt:
                 self.logger.log_info("Interactive mode exited")
                 return
+            
+            # Update endpoint completer with selected method
+            if swagger_client:
+                endpoint_completer = EndpointCompleter(swagger_client, method)
+                endpoints = swagger_client.get_available_endpoints(method)
+                self.logger.log_info(f"Found {len(endpoints)} {method} endpoints")
                 
             # Get endpoint
             try:
                 endpoint = prompt(
                     "Endpoint: ",
+                    completer=endpoint_completer,
                     history=endpoint_history
                 )
                 if not endpoint:
@@ -224,14 +277,40 @@ class RequestCommand:
             except KeyboardInterrupt:
                 self.logger.log_info("Interactive mode exited")
                 return
+            
+            # Get suggestions for data and headers from Swagger if available
+            sample_data = None
+            sample_headers = None
+            
+            if swagger_client:
+                # Get samples
+                sample_data = swagger_client.get_request_sample(endpoint, method)
+                sample_headers = swagger_client.get_header_samples(endpoint, method)
+                
+                # Log samples if available
+                if sample_data:
+                    self.logger.log_info(f"Sample request data: {json.dumps(sample_data, indent=2)}")
+                if sample_headers:
+                    self.logger.log_info(f"Sample headers: {json.dumps(sample_headers, indent=2)}")
+                
+                # Validate the endpoint
+                is_valid, errors = swagger_client.validate_request(endpoint, method)
+                if not is_valid:
+                    self.logger.log_error(f"Endpoint validation warnings: {', '.join(errors)}")
                 
             # Get data for non-GET requests
             data = None
             if method != 'GET':
                 try:
+                    # Show sample data if available
+                    sample_prompt = ""
+                    if sample_data:
+                        sample_prompt = f" (Sample available)"
+                        
                     data_str = prompt(
-                        "Request data (JSON, press Enter to skip): ",
-                        history=data_history
+                        f"Request data (JSON, press Enter to skip){sample_prompt}: ",
+                        history=data_history,
+                        default=json.dumps(sample_data) if sample_data else ""
                     )
                     if data_str:
                         try:
@@ -246,9 +325,15 @@ class RequestCommand:
             # Get headers
             headers = None
             try:
+                # Show sample headers if available
+                sample_prompt = ""
+                if sample_headers:
+                    sample_prompt = f" (Sample available)"
+                    
                 headers_str = prompt(
-                    "Headers (JSON, press Enter to skip): ",
-                    history=headers_history
+                    f"Headers (JSON, press Enter to skip){sample_prompt}: ",
+                    history=headers_history,
+                    default=json.dumps(sample_headers) if sample_headers else ""
                 )
                 if headers_str:
                     try:
