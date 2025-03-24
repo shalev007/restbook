@@ -342,6 +342,6 @@ class SwaggerParser:
         
         # Save spec as JSON using Pydantic's built-in JSON serialization
         with open(filepath, 'w') as f:
-            f.write(spec.model_dump_json(indent=2))
+            f.write(spec.model_dump_json(indent=2, by_alias=True))
             
         return str(filepath) 
