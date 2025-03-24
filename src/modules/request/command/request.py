@@ -281,8 +281,19 @@ class RequestCommand:
             # Get suggestions for data and headers from Swagger if available
             sample_data = None
             sample_headers = None
+            path_params = {}
             
             if swagger_client:
+                # Get endpoint details to check for path parameters
+                endpoint_details = swagger_client.get_endpoint_details(endpoint, method)
+                if endpoint_details and 'path_params' in endpoint_details:
+                    path_params = endpoint_details['path_params']
+                    if path_params:
+                        self.logger.log_info(f"Path parameters found: {', '.join(path_params.keys())}")
+                        # If there are path parameters, show them to the user
+                        for param_name, param_value in path_params.items():
+                            self.logger.log_info(f"Path parameter {param_name}: {param_value}")
+                
                 # Get samples
                 sample_data = swagger_client.get_request_sample(endpoint, method)
                 sample_headers = swagger_client.get_header_samples(endpoint, method)
@@ -325,13 +336,8 @@ class RequestCommand:
             # Get headers
             headers = None
             try:
-                # Show sample headers if available
-                sample_prompt = ""
-                if sample_headers:
-                    sample_prompt = f" (Sample available)"
-                    
                 headers_str = prompt(
-                    f"Headers (JSON, press Enter to skip){sample_prompt}: ",
+                    "Headers (JSON, press Enter to skip): ",
                     history=headers_history,
                     default=json.dumps(sample_headers) if sample_headers else ""
                 )
@@ -339,11 +345,12 @@ class RequestCommand:
                     try:
                         headers = json.loads(headers_str)
                     except json.JSONDecodeError:
-                        self.logger.log_error("Invalid JSON headers, continuing without headers")
+                        self.logger.log_error("Invalid JSON headers, skipping")
+                        headers = None
             except KeyboardInterrupt:
                 self.logger.log_info("Interactive mode exited")
                 return
-                
+            
             # Execute request
             try:
                 self.logger.log_info(f"Executing {method} request to {endpoint}")
@@ -356,10 +363,15 @@ class RequestCommand:
                 ))
             except Exception as e:
                 self.logger.log_error(f"Error executing request: {str(e)}")
+                continue
             
             # Ask if user wants to make another request
             try:
-                if not click.confirm("Make another request?"):
+                response = prompt(
+                    "Make another request? (y/N): ",
+                    default="N"
+                ).lower()
+                if response != 'y':
                     break
             except KeyboardInterrupt:
                 break

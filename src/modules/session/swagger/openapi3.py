@@ -58,83 +58,136 @@ class OpenAPI3Client(SwaggerClient):
     
     def get_endpoint_details(self, path: str, method: str) -> Optional[Dict[str, Any]]:
         """Get detailed information about a specific endpoint."""
+        # Find matching endpoint
+        endpoint_match = None
+        path_params = {}
+        
         for endpoint in self._spec.endpoints:
-            if endpoint.path == path and endpoint.method.upper() == method.upper():
-                return {
-                    'path': endpoint.path,
-                    'method': endpoint.method.upper(),
-                    'summary': endpoint.summary,
-                    'description': endpoint.description,
-                    'operation_id': endpoint.operation_id,
-                    'parameters': [
-                        {
-                            'name': param.name,
-                            'in': param.in_location,
-                            'required': param.required,
-                            'type': param.type,
-                            'description': param.description
-                        }
-                        for param in endpoint.parameters
-                    ],
-                    'request_body': endpoint.request_body,
-                    'responses': endpoint.responses,
-                    'tags': endpoint.tags
-                }
+            if endpoint.method.upper() == method.upper():
+                is_match, params = self._match_path_with_params(endpoint.path, path)
+                if is_match:
+                    endpoint_match = endpoint
+                    path_params = params
+                    break
                 
-        return None
+        if not endpoint_match:
+            return None
+            
+        return {
+            'path': endpoint_match.path,
+            'method': endpoint_match.method.upper(),
+            'summary': endpoint_match.summary,
+            'description': endpoint_match.description,
+            'operation_id': endpoint_match.operation_id,
+            'parameters': [
+                {
+                    'name': param.name,
+                    'in': param.in_location,
+                    'required': param.required,
+                    'type': param.type,
+                    'description': param.description
+                }
+                for param in endpoint_match.parameters
+            ],
+            'request_body': endpoint_match.request_body,
+            'responses': endpoint_match.responses,
+            'tags': endpoint_match.tags,
+            'path_params': path_params
+        }
         
     def get_request_sample(self, path: str, method: str) -> Optional[Dict[str, Any]]:
         """Generate a sample request body for the specified endpoint."""
+        # Find matching endpoint
+        endpoint_match = None
+        path_params = {}
+        
         for endpoint in self._spec.endpoints:
-            if endpoint.path == path and endpoint.method.upper() == method.upper():
-                if endpoint.request_body:
-                    content = endpoint.request_body.get('content', {})
-                    for content_type, content_obj in content.items():
-                        if 'application/json' in content_type:
-                            schema = content_obj.get('schema', {})
-                            if schema:
-                                return self._generate_sample_from_schema(schema)
+            if endpoint.method.upper() == method.upper():
+                is_match, params = self._match_path_with_params(endpoint.path, path)
+                if is_match:
+                    endpoint_match = endpoint
+                    path_params = params
+                    break
+                
+        if not endpoint_match:
+            return None
+            
+        # Generate sample data
+        sample_data = {}
+        
+        # Add request body if present
+        if endpoint_match.request_body:
+            content = endpoint_match.request_body.get('content', {})
+            for content_type, content_obj in content.items():
+                if 'application/json' in content_type:
+                    schema = content_obj.get('schema', {})
+                    if schema:
+                        body_sample = self._generate_sample_from_schema(schema)
+                        if body_sample:
+                            sample_data = body_sample
                         
-        return None
+        return sample_data if sample_data else None
         
     def get_response_sample(self, path: str, method: str, status_code: str = "200") -> Optional[Dict[str, Any]]:
         """Generate a sample response for the specified endpoint."""
+        # Find matching endpoint
+        endpoint_match = None
+        
         for endpoint in self._spec.endpoints:
-            if endpoint.path == path and endpoint.method.upper() == method.upper():
-                response = endpoint.responses.get(status_code, {})
-                content = response.get('content', {})
-                for content_type, content_obj in content.items():
-                    if 'application/json' in content_type:
-                        schema = content_obj.get('schema', {})
-                        if schema:
-                            return self._generate_sample_from_schema(schema)
-                        
+            if endpoint.method.upper() == method.upper():
+                is_match, _ = self._match_path_with_params(endpoint.path, path)
+                if is_match:
+                    endpoint_match = endpoint
+                    break
+                
+        if not endpoint_match:
+            return None
+            
+        response = endpoint_match.responses.get(status_code, {})
+        content = response.get('content', {})
+        for content_type, content_obj in content.items():
+            if 'application/json' in content_type:
+                schema = content_obj.get('schema', {})
+                if schema:
+                    return self._generate_sample_from_schema(schema)
+                    
         return None
         
     def get_header_samples(self, path: str, method: str) -> Dict[str, str]:
         """Get sample headers for the specified endpoint."""
-        headers = {}
+        headers: Dict[str, str] = {}
+        
+        # Find matching endpoint
+        endpoint_match = None
         
         for endpoint in self._spec.endpoints:
-            if endpoint.path == path and endpoint.method.upper() == method.upper():
-                # Check header parameters
-                header_params = [p for p in endpoint.parameters if p.in_location == 'header']
+            if endpoint.method.upper() == method.upper():
+                is_match, _ = self._match_path_with_params(endpoint.path, path)
+                if is_match:
+                    endpoint_match = endpoint
+                    break
                 
-                for param in header_params:
-                    sample_value = "sample_value"
-                    if param.enum and param.enum[0]:
-                        sample_value = param.enum[0]
-                    elif param.default is not None:
-                        sample_value = str(param.default)
-                        
-                    headers[param.name] = sample_value
-                    
-                # Also check response headers for this endpoint
-                for status, response in endpoint.responses.items():
-                    resp_headers = response.get('headers', {})
-                    for header_name, header_obj in resp_headers.items():
-                        headers[header_name] = "response_value"
+        if not endpoint_match:
+            return headers
+            
+        # Check header parameters
+        header_params = [p for p in endpoint_match.parameters if p.in_location == 'header']
+        
+        for param in header_params:
+            sample_value = "sample_value"
+            if param.enum and param.enum[0]:
+                sample_value = param.enum[0]
+            elif param.default is not None:
+                sample_value = str(param.default)
                 
+            headers[param.name] = sample_value
+            
+        # Also check response headers for this endpoint
+        for status, response in endpoint_match.responses.items():
+            resp_headers = response.get('headers', {})
+            for header_name, header_obj in resp_headers.items():
+                headers[header_name] = "response_value"
+        
         return headers
         
     def validate_request(
@@ -145,18 +198,35 @@ class OpenAPI3Client(SwaggerClient):
         headers: Optional[Dict[str, str]] = None
     ) -> Tuple[bool, List[str]]:
         """Validate a request against the schema."""
-        # This is a simple implementation - a real one would use a JSON Schema validator
         errors = []
         
-        # Find the endpoint
+        # Find matching endpoint
         endpoint_match = None
+        path_params = {}
+        
         for endpoint in self._spec.endpoints:
-            if endpoint.path == path and endpoint.method.upper() == method.upper():
-                endpoint_match = endpoint
-                break
+            if endpoint.method.upper() == method.upper():
+                is_match, params = self._match_path_with_params(endpoint.path, path)
+                if is_match:
+                    endpoint_match = endpoint
+                    path_params = params
+                    break
                 
         if not endpoint_match:
             return False, ["Endpoint not found in specification"]
+            
+        # Validate path parameters
+        path_param_names = self._get_path_params(endpoint_match.path)
+        for param_name in path_param_names:
+            if param_name not in path_params:
+                errors.append(f"Missing required path parameter: {param_name}")
+            else:
+                # Find the parameter definition
+                param = next((p for p in endpoint_match.parameters if p.name == param_name and p.in_location == 'path'), None)
+                if param:
+                    # Validate the parameter value
+                    if param.enum and path_params[param_name] not in param.enum:
+                        errors.append(f"Invalid value for path parameter {param_name}: must be one of {param.enum}")
             
         # Check required parameters
         if headers:
@@ -230,4 +300,19 @@ class OpenAPI3Client(SwaggerClient):
     def _generate_value_for_property(self, prop_schema: Dict[str, Any]) -> Any:
         """Generate a sample value for a property."""
         # Delegate to _generate_sample_from_schema
-        return self._generate_sample_from_schema(prop_schema) 
+        return self._generate_sample_from_schema(prop_schema)
+        
+    def _generate_sample_value(self, param: Any) -> Any:
+        """Generate a sample value for a parameter."""
+        if param.enum and param.enum[0]:
+            return param.enum[0]
+        elif param.default is not None:
+            return param.default
+        elif param.type == 'string':
+            return "string"
+        elif param.type == 'integer' or param.type == 'number':
+            return 0
+        elif param.type == 'boolean':
+            return False
+        else:
+            return None 

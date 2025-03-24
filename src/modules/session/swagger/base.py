@@ -2,6 +2,7 @@
 
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Any, Tuple
+import re
 
 class SwaggerClient(ABC):
     """
@@ -125,4 +126,52 @@ class SwaggerClient(ABC):
         Returns:
             Tuple of (is_valid, error_messages).
         """
-        pass 
+        pass
+
+    def _match_path_with_params(self, spec_path: str, request_path: str) -> Tuple[bool, Dict[str, str]]:
+        """
+        Match a request path against a spec path with parameters.
+        
+        Args:
+            spec_path: Path from the specification (e.g. /pet/{petId})
+            request_path: Actual request path (e.g. /pet/123)
+            
+        Returns:
+            Tuple of (is_match, path_params) where path_params is a dict of parameter name to value
+        """
+        # Convert spec path to regex pattern
+        pattern = spec_path.replace('{', '(?P<').replace('}', '>[^/]+)')
+        match = re.match(f'^{pattern}$', request_path)
+        
+        if not match:
+            return False, {}
+            
+        return True, match.groupdict()
+        
+    def _get_path_params(self, spec_path: str) -> List[str]:
+        """
+        Extract path parameters from a spec path.
+        
+        Args:
+            spec_path: Path from the specification (e.g. /pet/{petId})
+            
+        Returns:
+            List of parameter names
+        """
+        return re.findall(r'{([^}]+)}', spec_path)
+        
+    def _replace_path_params(self, spec_path: str, params: Dict[str, str]) -> str:
+        """
+        Replace path parameters in a spec path with their values.
+        
+        Args:
+            spec_path: Path from the specification (e.g. /pet/{petId})
+            params: Dictionary of parameter name to value
+            
+        Returns:
+            Path with parameters replaced
+        """
+        result = spec_path
+        for name, value in params.items():
+            result = result.replace(f'{{{name}}}', value)
+        return result 
