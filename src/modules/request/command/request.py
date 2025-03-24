@@ -109,6 +109,21 @@ class RequestCommand:
         Returns:
             The response from the API
         """
+        # Log request details
+        self.logger.log_info(f"\nRequest Details:")
+        self.logger.log_info(f"Method: {method}")
+        self.logger.log_info(f"Endpoint: {endpoint}")
+        if headers:
+            self.logger.log_info("Headers:")
+            for key, value in headers.items():
+                # Mask sensitive values
+                if key.lower() in {'authorization', 'x-api-key', 'api-key'}:
+                    value = '*' * 8
+                self.logger.log_info(f"  {key}: {value}")
+        if data:
+            self.logger.log_info("Data:")
+            self.logger.log_info(json.dumps(data, indent=2))
+        
         # Create executor with session data and options
         executor = RequestExecutor(
             session=session,
@@ -118,18 +133,23 @@ class RequestCommand:
             backoff_factor=self.backoff_factor
         )
         
-        # Execute request
-        response = await executor.execute_request(
-            method=method,
-            endpoint=endpoint,
-            data=data,
-            headers=headers
-        )
+        try:
+            # Execute request
+            response = await executor.execute_request(
+                method=method,
+                endpoint=endpoint,
+                data=data,
+                headers=headers
+            )
 
-        # Log response
-        await self._log_response(response)
-            
-        return response
+            # Log response
+            await self._log_response(response)
+                
+            return response
+        except Exception as e:
+            self.logger.log_error(f"\nRequest failed with error: {str(e)}")
+            self.logger.log_error("Request details were logged above")
+            raise
     
     async def _log_response(self, response):
         """Log the response details."""

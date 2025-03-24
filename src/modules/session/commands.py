@@ -38,7 +38,12 @@ def create_session_commands() -> click.Group:
         Examples:
             # Create a session without authentication
             restbook session create my-api https://api.example.com
-            
+
+            # Create a session with api key
+            restbook session create my-api https://api.example.com \\
+                --auth-type api_key \\
+                --auth-credentials '{"api_key": "my-api-key", "header_name": "X-API-Key"}'
+
             # Create a session with bearer token
             restbook session create my-api https://api.example.com \\
                 --auth-type bearer \\
