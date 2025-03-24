@@ -4,7 +4,7 @@ import asyncio
 from typing import Dict, Any
 from ..logging import BaseLogger
 from .session_store import SessionStore
-
+from .swagger import SwaggerParser, SwaggerParserError, SwaggerSpec
 
 def create_session_commands() -> click.Group:
     """Create the session command group."""
@@ -37,7 +37,12 @@ def create_session_commands() -> click.Group:
         Examples:
             # Create a session without authentication
             restbook session create my-api https://api.example.com
-            
+
+            # Create a session with api key
+            restbook session create my-api https://api.example.com \\
+                --auth-type api_key \\
+                --auth-credentials '{"api_key": "my-api-key", "header_name": "X-API-Key"}'
+
             # Create a session with bearer token
             restbook session create my-api https://api.example.com \\
                 --auth-type bearer \\
@@ -96,9 +101,64 @@ def create_session_commands() -> click.Group:
                 logger.log_info(f"Base URL: {session.base_url}")
                 if session.auth_config:
                     logger.log_info(f"Auth Type: {session.auth_config.type}")
+                if session.has_swagger():
+                    swagger_source = session.get_swagger_source()
+                    logger.log_info(f"Swagger: {swagger_source}")
                     
         except Exception as e:
             logger.log_error(str(e))
+
+    @session.command(name='import-swagger')
+    @click.argument('name')
+    @click.argument('source')
+    @click.option('--validate/--no-validate', default=True, help='Validate the Swagger specification')
+    @click.pass_context
+    def import_swagger(ctx, name: str, source: str, validate: bool):
+        """Import Swagger/OpenAPI specification for a session.
+        
+        SOURCE can be either a URL or a local file path.
+        """
+        try:
+            session_store: SessionStore = ctx.obj.session_store
+            logger: BaseLogger = ctx.obj.logger
+            
+            # Get session
+            session = session_store.get_session(name)
+
+            # Infer source type
+            is_url = source.startswith(('http://', 'https://'))
+            source_type = 'url' if is_url else 'file'
+            
+            logger.log_info(f"Importing Swagger specification from {source_type}: {source}")
+            # Parse specification
+            parser = SwaggerParser()
+            spec = parser.parse(source)
+            
+            if validate:    
+                logger.log_info("Validating Swagger specification...")
+                try:
+                    SwaggerSpec.model_validate(spec)
+                    logger.log_info("Swagger specification is valid")
+                except Exception as e:
+                    logger.log_error(f"Invalid Swagger specification: {str(e)}")
+                    return
+            
+            # Save parsed spec to file using the parser's method
+            spec_path = parser.save_swagger_spec(spec, name)
+            logger.log_info(f"Saved Swagger specification to {spec_path}")
+            
+            # Update session
+            session.swagger_spec_path = spec_path
+            
+            # Save session
+            session_store.upsert_session(name, json.dumps(session.to_dict()), overwrite=True)
+            
+            logger.log_info(f"Successfully imported Swagger specification for session '{name}'")
+            logger.log_info(f"Found {len(spec.paths)} endpoints")
+            
+        except Exception as e:
+            logger.log_error(f"Failed to import Swagger specification: {str(e)}")
+            raise click.Abort()
 
     @session.command(name='update')
     @click.argument('name')
@@ -171,6 +231,11 @@ def create_session_commands() -> click.Group:
                     'credentials': current_session.auth_config.credentials
                 }
             
+            # Preserve Swagger references
+            if current_session.swagger_spec_path:
+                session_data['swagger_spec_path'] = current_session.swagger_spec_path
+            
+            
             # Delete old session if name is changing
             if new_name:
                 session_store.delete_session(name)
@@ -222,6 +287,10 @@ def create_session_commands() -> click.Group:
                     if key in {'token', 'password', 'client_secret'}:
                         value = '*' * 8
                     logger.log_info(f"    {key}: {value}")
+            
+            if session.has_swagger():
+                logger.log_info("\nSwagger/OpenAPI:")
+                logger.log_info(f"  Specification: {session.get_swagger_source()}")
                     
         except Exception as e:
             logger.log_error(str(e))
