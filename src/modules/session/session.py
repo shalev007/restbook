@@ -3,6 +3,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
 from .auth import AuthConfig, create_authenticator, Authenticator
+from .swagger import SwaggerClient, SwaggerClientFactory
 
 
 @dataclass
@@ -16,6 +17,8 @@ class Session:
     def __post_init__(self):
         """Initialize the authenticator if auth config is provided."""
         self.authenticator: Optional[Authenticator] = None
+        self._swagger_client: Optional[SwaggerClient] = None
+        
         if self.auth_config:
             self.authenticator = create_authenticator(self.auth_config)
 
@@ -55,11 +58,28 @@ class Session:
 
     def has_swagger(self) -> bool:
         """Check if the session has a Swagger specification."""
-        return bool(self.swagger_spec_path)
+        return bool(self.swagger_spec_path) and os.path.exists(self.swagger_spec_path or "")
 
     def get_swagger_source(self) -> Optional[str]:
         """Get the path to the Swagger specification."""
         return self.swagger_spec_path
+    
+    @property
+    def swagger_client(self) -> Optional[SwaggerClient]:
+        """
+        Get the Swagger client for this session.
+        
+        Returns:
+            SwaggerClient: Swagger client instance or None if not available
+        """
+        if not self.has_swagger() or not self.swagger_spec_path:
+            return None
+            
+        # Lazy initialization
+        if self._swagger_client is None:
+            self._swagger_client = SwaggerClientFactory.create_from_file(self.swagger_spec_path)
+            
+        return self._swagger_client
 
     @classmethod
     def from_dict(cls, name: str, data: Dict[str, Any]) -> 'Session':
