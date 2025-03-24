@@ -18,7 +18,7 @@ def create_session_commands() -> click.Group:
     @click.argument('name')
     @click.argument('base_url')
     @click.option('--auth-type', 
-                 type=click.Choice(['bearer', 'basic', 'oauth2']),
+                 type=click.Choice(['bearer', 'basic', 'oauth2', 'api_key']),
                  help='Authentication type')
     @click.option('--auth-credentials',
                  help='Authentication credentials as JSON string. Examples:\n'
@@ -26,7 +26,8 @@ def create_session_commands() -> click.Group:
                       'Basic: {"username": "user", "password": "pass"}\n'
                       'OAuth2: {"client_id": "id", "client_secret": "secret", '
                       '"token_url": "https://auth.example.com/token", '
-                      '"scope": "read write"}')
+                      '"scope": "read write"}\n'
+                      'API Key: {"api_key": "my-api-key", "header_name": "X-API-Key"}')
     @click.pass_context
     def create(ctx, name: str, base_url: str, auth_type: str | None = None,
                auth_credentials: str | None = None) -> None:
