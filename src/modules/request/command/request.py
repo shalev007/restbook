@@ -298,22 +298,34 @@ class RequestCommand:
                 self.logger.log_info("Interactive mode exited")
                 return
             
-            # Get suggestions for data and headers from Swagger if available
-            sample_data = None
-            sample_headers = None
-            path_params = {}
-            
+            # Handle path parameters if present
             if swagger_client:
-                # Get endpoint details to check for path parameters
                 endpoint_details = swagger_client.get_endpoint_details(endpoint, method)
                 if endpoint_details and 'path_params' in endpoint_details:
                     path_params = endpoint_details['path_params']
                     if path_params:
                         self.logger.log_info(f"Path parameters found: {', '.join(path_params.keys())}")
-                        # If there are path parameters, show them to the user
+                        # Prompt for each path parameter
                         for param_name, param_value in path_params.items():
-                            self.logger.log_info(f"Path parameter {param_name}: {param_value}")
-                
+                            try:
+                                value = prompt(
+                                    f"Enter {param_name}: ",
+                                    default=param_value if param_value else ""
+                                )
+                                if not value:
+                                    self.logger.log_error(f"Path parameter {param_name} is required")
+                                    continue
+                                # Replace the parameter in the endpoint
+                                endpoint = endpoint.replace(f"{{{param_name}}}", value)
+                            except KeyboardInterrupt:
+                                self.logger.log_info("Interactive mode exited")
+                                return
+            
+            # Get suggestions for data and headers from Swagger if available
+            sample_data = None
+            sample_headers = None
+            
+            if swagger_client:
                 # Get samples
                 sample_data = swagger_client.get_request_sample(endpoint, method)
                 sample_headers = swagger_client.get_header_samples(endpoint, method)
@@ -328,7 +340,7 @@ class RequestCommand:
                 is_valid, errors = swagger_client.validate_request(endpoint, method)
                 if not is_valid:
                     self.logger.log_error(f"Endpoint validation warnings: {', '.join(errors)}")
-                
+            
             # Get data for non-GET requests
             data = None
             if method != 'GET':
