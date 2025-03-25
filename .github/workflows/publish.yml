@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - feat-add-github-publish-workflow
 
 jobs:
   build-and-publish:
@@ -34,7 +33,3 @@ jobs:
         env:
           POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
         run: poetry publish
-
-      - name: Setup tmate session
-        uses: mxschmitt/action-tmate@v3
-        if: failure()
