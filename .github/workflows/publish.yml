@@ -29,11 +29,12 @@ jobs:
       - name: Build package
         run: poetry build
 
-      - name: Setup tmate session
-        uses: mxschmitt/action-tmate@v3
-
       - name: Publish to PyPI
         if: github.event_name == 'push'
         env:
           POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
-        run: poetry publish --no-interaction --build
+        run: poetry publish
+
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+        if: failure()
