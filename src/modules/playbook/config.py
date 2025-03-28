@@ -63,13 +63,18 @@ class CircuitBreakerConfig(BaseModel):
     threshold: int = 2  # number of failures before opening the circuit
     reset: int = 10     # seconds to wait before resetting circuit breaker
     jitter: float = 0.0  # random jitter factor (0.0 to 1.0) to add to reset time
-    
+
+class RateLimitConfig(BaseModel):
+    use_server_retry_delay: bool = True
+    retry_header: str = "Retry-After"
 
 class RetryConfig(BaseModel):
     max_retries: int = 2
     backoff_factor: float = 1.0
     max_delay: Optional[int] = None
     circuit_breaker: Optional[CircuitBreakerConfig] = None
+    rate_limit: RateLimitConfig = RateLimitConfig()
+
     @model_validator(mode='after')
     def validate_circuit_breaker(self) -> 'RetryConfig':
         if self.circuit_breaker:
