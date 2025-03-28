@@ -40,4 +40,9 @@ copy_code: true
 dark_mode: true
 
 # Enable last modified date
-last_modified_date: true 
+last_modified_date: true
+
+# Navigation
+nav_order:
+  - index.md
+  - getting-started.md 
