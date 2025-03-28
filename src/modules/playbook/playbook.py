@@ -7,15 +7,18 @@ import jq  # type: ignore
 
 from src.modules.session.session import Session
 
-from .config import AuthType, PlaybookConfig, PhaseConfig, StepConfig, StoreConfig, RequestConfig, SessionConfig, AuthConfig, AuthCredentials, IncrementalConfig
+from .config import (
+    AuthType, PlaybookConfig, PhaseConfig, StepConfig, StoreConfig, 
+    RequestConfig, SessionConfig, AuthConfig, AuthCredentials, RetryConfig
+)
 from .validator import PlaybookYamlValidator
 from .template import TemplateRenderer
 from .checkpoint import CheckpointStore, CheckpointData, create_checkpoint_store
 from .variables import VariableManager
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
-from ..request.executor import RequestExecutor
-
+from ..request.resilient_http_client import RequestParams, ResilientHttpClient, ResilientHttpClientConfig
+from ..request.circuit_breaker import CircuitBreaker
 class Playbook:
     """Represents a playbook that can be executed."""
     
@@ -352,6 +355,24 @@ class Playbook:
             else:
                 raise
 
+    def _convert_to_executor_config(self, playbook_config: RequestConfig) -> RequestParams:
+        """Convert a playbook request config to an executor request config.
+        
+        Args:
+            playbook_config: The playbook's request configuration
+            
+        Returns:
+            RequestParams: The executor's request configuration
+        """
+        
+        return RequestParams(
+            url=playbook_config.endpoint,
+            method=playbook_config.method.value,
+            headers=playbook_config.headers,
+            data=playbook_config.data,
+            params=playbook_config.params
+        )
+
     async def _execute_single_step(self, step: StepConfig, session_store: SessionStore) -> None:
         """Execute a single step without iteration."""
         # Get session for this step
@@ -360,37 +381,59 @@ class Playbook:
         else:
             session = session_store.get_session(step.session)
 
+        # Create request execution config
+        retry_config = step.retry or RetryConfig()
+        circuit_breaker_config = retry_config.circuit_breaker
+        
+        execution_config = ResilientHttpClientConfig(
+            timeout=step.timeout or 30,
+            verify_ssl=step.validate_ssl or True,
+            max_retries=retry_config.max_retries or 3,
+            backoff_factor=retry_config.backoff_factor or 0.5,
+            max_delay=retry_config.max_delay
+        )
+
+        # Create circuit breaker if configured
+        circuit_breaker = None
+        if circuit_breaker_config:
+            circuit_breaker = CircuitBreaker(
+                threshold=circuit_breaker_config.threshold or 2,
+                reset_timeout=circuit_breaker_config.reset or 10,
+                jitter=circuit_breaker_config.jitter or 0.0
+            )
+
+        # Convert playbook request config to executor request config
+        request_config = self._convert_to_executor_config(step.request)
+
         # Create request executor with step-specific config
-        executor = RequestExecutor(
+        client = ResilientHttpClient(
             session=session,
-            timeout=(step.retry and step.retry.timeout) or 30,
-            verify_ssl=step.validate_ssl if step.validate_ssl is not None else True,
-            max_retries=(step.retry and step.retry.max_retries) or 3,
-            backoff_factor=(step.retry and step.retry.backoff_factor) or 0.5
+            config=execution_config,
+            logger=self.logger,
+            circuit_breaker=circuit_breaker
         )
 
-        # Execute request
-        response = await executor.execute_request(
-            method=step.request.method.value,
-            endpoint=step.request.endpoint,
-            headers=step.request.headers,
-            data=step.request.data
-        )
-
-        # Log response
-        self.logger.log_status(response.status)
         try:
-            body = await response.json()
-            body_str = json.dumps(body, indent=2)
-            
-            # Store response data if configured
-            if step.store:
-                try:
-                    await self.variables.store_response_data(step.store, body)
-                except Exception as e:
-                    if step.on_error != "ignore":
-                        raise
-            
-        except json.JSONDecodeError:
-            body_str = await response.text()
-        self.logger.log_body(body_str)
+            # Execute request
+            response = await client.execute_request(request_config)
+
+            # Log response
+            self.logger.log_status(response.status)
+            try:
+                body = await response.json()
+                body_str = json.dumps(body, indent=2)
+                
+                # Store response data if configured
+                if step.store:
+                    try:
+                        await self.variables.store_response_data(step.store, body)
+                    except Exception as e:
+                        if step.on_error != "ignore":
+                            raise
+                
+            except json.JSONDecodeError:
+                body_str = await response.text()
+            self.logger.log_body(body_str)
+        finally:
+            # Ensure executor is closed
+            await client.close()

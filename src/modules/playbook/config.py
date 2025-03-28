@@ -60,10 +60,27 @@ class StoreConfig(BaseModel):
     jq: Optional[str] = None  # JQ query to extract data from response
     append: bool = False  # If true, append to list instead of replacing value
 
+class CircuitBreakerConfig(BaseModel):
+    threshold: Optional[int] = 2  # number of failures before opening the circuit
+    reset: Optional[int] = 10     # seconds to wait before resetting circuit breaker
+    jitter: Optional[float] = 0.0  # random jitter factor (0.0 to 1.0) to add to reset time
+    
+
 class RetryConfig(BaseModel):
-    max_retries: Optional[int] = 3
+    max_retries: Optional[int] = 2
     backoff_factor: Optional[float] = 1.0
-    timeout: Optional[int] = 10
+    max_delay: Optional[int] = None
+    circuit_breaker: Optional[CircuitBreakerConfig] = None
+    @model_validator(mode='after')
+    def validate_circuit_breaker(self) -> 'RetryConfig':
+        if self.circuit_breaker:
+            if self.max_retries is None:
+                raise ValueError("max_retries is required when circuit_breaker is provided")
+            if self.circuit_breaker.threshold is None:
+                raise ValueError("circuit_breaker.threshold is required when circuit_breaker is provided")
+            if self.max_retries < self.circuit_breaker.threshold:
+                raise ValueError("max_retries must be greater than or equal to circuit_breaker.threshold")
+        return self
 
 class OnErrorConfig(str, Enum):
     IGNORE = "ignore"
@@ -77,6 +94,7 @@ class StepConfig(BaseModel):
     store: Optional[List[StoreConfig]] = None
     retry: Optional[RetryConfig] = None
     validate_ssl: Optional[bool] = True
+    timeout: Optional[int] = 30
     on_error: Optional[OnErrorConfig] = OnErrorConfig.ABORT
 
 class PhaseConfig(BaseModel):
