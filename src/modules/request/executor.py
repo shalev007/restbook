@@ -57,10 +57,7 @@ class ResilientHttpClient:
         self.config = config
         self.logger = logger
         self.session_cache = session_cache or AioSessionCache()
-        self.circuit_breaker = circuit_breaker or CircuitBreaker(
-            threshold=config.circuit_breaker_threshold,
-            reset_timeout=config.circuit_breaker_reset
-        )
+        self.circuit_breaker = circuit_breaker  # Allow it to be None
         
 
     async def execute_request(
@@ -92,8 +89,8 @@ class ResilientHttpClient:
             for attempt in range(self.config.max_retries + 1):
                 response = None
                 try:
-                    # Wait if circuit breaker is open instead of throwing an error
-                    if self.circuit_breaker.is_open():
+                    # Only check circuit breaker if it exists
+                    if self.circuit_breaker and self.circuit_breaker.is_open():
                         self.logger.log_error(f"Circuit breaker is open, waiting {self.config.circuit_breaker_reset} seconds before next attempt...")
                         await asyncio.sleep(self.config.circuit_breaker_reset)
                     
@@ -122,8 +119,9 @@ class ResilientHttpClient:
                         self.logger.log_error(f"Server returned a retryable status code {response.status}")
                         raise RetryableError("Server returned a retryable status code")
                     
-                    # Record success and return response
-                    self.circuit_breaker.record_success()
+                    # Only record success if circuit breaker exists
+                    if self.circuit_breaker:
+                        self.circuit_breaker.record_success()
                     return response
                 except AuthenticationError:
                     if attempt < self.config.max_retries:
@@ -132,7 +130,9 @@ class ResilientHttpClient:
                         raise AuthenticationError("Authentication failed after retries")
                 except RetryableError:
                     if attempt < self.config.max_retries:
-                        self.circuit_breaker.record_failure()
+                        # Only record failure if circuit breaker exists
+                        if self.circuit_breaker:
+                            self.circuit_breaker.record_failure()
                         await self._handle_retry_delay(attempt)
                         continue
                     raise RetryExceededError("Max retries exceeded")
@@ -143,7 +143,9 @@ class ResilientHttpClient:
                 except aiohttp.ClientConnectorError as err:
                     self.logger.log_error(f"Connection error: {str(err)}")
                     if attempt < self.config.max_retries:
-                        self.circuit_breaker.record_failure()
+                        # Only record failure if circuit breaker exists
+                        if self.circuit_breaker:
+                            self.circuit_breaker.record_failure()
                         await self._handle_retry_delay(attempt)
                         continue
                     raise RetryExceededError(f"Connection failed after {self.config.max_retries} attempts: {str(err)}")
