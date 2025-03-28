@@ -65,7 +65,8 @@ class RequestCommand:
         timeout: int = 30,
         verify_ssl: bool = True,
         max_retries: int = 3,
-        backoff_factor: float = 0.5
+        backoff_factor: float = 0.5,
+        max_delay: Optional[int] = None
     ):
         """
         Initialize the request command.
@@ -77,6 +78,7 @@ class RequestCommand:
             verify_ssl: Whether to verify SSL certificates
             max_retries: Maximum number of retries
             backoff_factor: Backoff factor for retries
+            max_delay: Maximum delay between retries in seconds
         """
         self.logger = logger
         self.session_store = session_store
@@ -84,6 +86,7 @@ class RequestCommand:
         self.verify_ssl = verify_ssl
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
+        self.max_delay = max_delay
     
     async def execute_request(
         self,
@@ -128,7 +131,8 @@ class RequestCommand:
                 timeout=self.timeout,
                 verify_ssl=self.verify_ssl,
                 max_retries=self.max_retries,
-                backoff_factor=self.backoff_factor
+                backoff_factor=self.backoff_factor,
+                max_delay=self.max_delay
             ),
             logger=self.logger
         )
