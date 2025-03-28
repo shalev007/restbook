@@ -6,12 +6,14 @@ description: "Learn about the structure and components of RestBook playbooks"
 permalink: /playbook-structure/
 ---
 
+# Playbook Structure
+
 This guide explains the structure and components of RestBook playbooks. A playbook is a YAML file that defines your API workflow, including sessions, phases, and steps.
 
 ## Sessions
 
 Sessions define the base configuration for API connections, including authentication and default settings:
-
+{% raw %}
 ```yaml
 sessions:
   my_api:
@@ -33,19 +35,14 @@ sessions:
         scopes:
           - "read"
           - "write"
-    headers:
-      Custom-Header: "value"
-    verify_ssl: true
 ```
-
+{% endraw %}
 ### Session Configuration Options
 
 - `base_url`: The base URL for all requests in this session
 - `auth`: Authentication configuration
   - `type`: Authentication type (none, bearer, basic, oauth2)
   - `credentials`: Authentication credentials
-- `headers`: Default headers for all requests
-- `verify_ssl`: SSL verification setting
 
 ## Phases
 
@@ -128,7 +125,7 @@ steps:
 ## Variable Storage and Templates
 
 RestBook supports storing and using data between steps:
-
+{% raw %}
 ```yaml
 steps:
   - session: "api"
@@ -148,11 +145,11 @@ steps:
         name: "{{ user.name }}"
         email: "{{ user.email }}"
 ```
-
+{% endraw %}
 ### Appending to Lists
 
 You can append to list variables across multiple steps:
-
+{% raw %}
 ```yaml
 steps:
   - session: "api"
@@ -173,7 +170,7 @@ steps:
         jq: ".users"
         append: true  # Appends to existing list
 ```
-
+{% endraw %}
 ## Next Steps
 
 - Learn about [Features](./features.md) in detail
