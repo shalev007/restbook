@@ -1,6 +1,6 @@
 title: RestBook Documentation
 description: Documentation for RestBook - A powerful API request orchestration tool
-theme: just-the-docs
+theme: minima
 baseurl: "/restbook"  # The subpath of your site, e.g. /blog
 url: ""  # The base hostname & protocol, e.g. http://example.com
 
