@@ -386,10 +386,10 @@ class Playbook:
         circuit_breaker_config = retry_config.circuit_breaker
         
         execution_config = ResilientHttpClientConfig(
-            timeout=step.timeout or 30,
-            verify_ssl=step.validate_ssl or True,
-            max_retries=retry_config.max_retries or 3,
-            backoff_factor=retry_config.backoff_factor or 0.5,
+            timeout=step.timeout,
+            verify_ssl=step.validate_ssl,
+            max_retries=retry_config.max_retries,
+            backoff_factor=retry_config.backoff_factor,
             max_delay=retry_config.max_delay
         )
 
@@ -397,9 +397,9 @@ class Playbook:
         circuit_breaker = None
         if circuit_breaker_config:
             circuit_breaker = CircuitBreaker(
-                threshold=circuit_breaker_config.threshold or 2,
-                reset_timeout=circuit_breaker_config.reset or 10,
-                jitter=circuit_breaker_config.jitter or 0.0
+                threshold=circuit_breaker_config.threshold,
+                reset_timeout=circuit_breaker_config.reset,
+                jitter=circuit_breaker_config.jitter
             )
 
         # Convert playbook request config to executor request config

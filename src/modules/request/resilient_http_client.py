@@ -10,10 +10,10 @@ from ..logging import BaseLogger
 from ..session.session import Session
 
 class ResilientHttpClientConfig(BaseModel):
-    timeout: int = 30
+    timeout: int = 10
     verify_ssl: bool = True
-    max_retries: int = 3
-    backoff_factor: float = 0.5
+    max_retries: int = 1
+    backoff_factor: float = 0
     max_delay: Optional[int] = None  # Maximum delay in seconds between retries
 
 class RequestParams(BaseModel):
@@ -113,7 +113,7 @@ class ResilientHttpClient:
                     
                     # Check if we should retry other errors
                     if response.status in self.RETRY_STATUS_CODES:
-                        self.logger.log_error(f"Server returned a retryable status code {response.status}")
+                        self.logger.log_error(f"Server returned a retryable status code {response.status}, retrying {attempt + 1} of {self.config.max_retries}...")
                         raise RetryableError("Server returned a retryable status code")
                     
                     # Only record success if circuit breaker exists

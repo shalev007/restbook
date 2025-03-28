@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from enum import Enum
 from typing import List, Dict, Any
 
@@ -61,14 +60,14 @@ class StoreConfig(BaseModel):
     append: bool = False  # If true, append to list instead of replacing value
 
 class CircuitBreakerConfig(BaseModel):
-    threshold: Optional[int] = 2  # number of failures before opening the circuit
-    reset: Optional[int] = 10     # seconds to wait before resetting circuit breaker
-    jitter: Optional[float] = 0.0  # random jitter factor (0.0 to 1.0) to add to reset time
+    threshold: int = 2  # number of failures before opening the circuit
+    reset: int = 10     # seconds to wait before resetting circuit breaker
+    jitter: float = 0.0  # random jitter factor (0.0 to 1.0) to add to reset time
     
 
 class RetryConfig(BaseModel):
-    max_retries: Optional[int] = 2
-    backoff_factor: Optional[float] = 1.0
+    max_retries: int = 2
+    backoff_factor: float = 1.0
     max_delay: Optional[int] = None
     circuit_breaker: Optional[CircuitBreakerConfig] = None
     @model_validator(mode='after')
@@ -93,8 +92,8 @@ class StepConfig(BaseModel):
     request: RequestConfig  # Use our nested model for request details.
     store: Optional[List[StoreConfig]] = None
     retry: Optional[RetryConfig] = None
-    validate_ssl: Optional[bool] = True
-    timeout: Optional[int] = 30
+    validate_ssl: bool = True
+    timeout: int = 30
     on_error: Optional[OnErrorConfig] = OnErrorConfig.ABORT
 
 class PhaseConfig(BaseModel):
