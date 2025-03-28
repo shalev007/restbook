@@ -45,4 +45,5 @@ last_modified_date: true
 # Navigation
 nav_order:
   - index.md
-  - getting-started.md 
+  - getting-started.md
+  - playbook-structure.md 
