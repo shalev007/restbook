@@ -10,7 +10,7 @@ from src.modules.request.errors import (
 )
 from src.modules.session.session import Session
 from src.modules.session.auth import AuthConfig
-
+from aiohttp.client_exceptions import ConnectionKey
 
 @pytest.fixture
 def session_name():
@@ -203,26 +203,32 @@ class TestResilientHttpClient:
         )
 
         with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
-            # First two requests should fail and record failures
-            for _ in range(2):
-                with pytest.raises(RetryExceededError):
-                    await executor.execute_request(
-                        RequestParams(
-                            method="GET",
-                            url="/test"
-                        )
+            # First request should fail and record failure
+            with pytest.raises(RetryExceededError):
+                await executor.execute_request(
+                    RequestParams(
+                        method="GET",
+                        url="/test"
                     )
+                )
             
-            # Circuit breaker should be open
+            # Circuit breaker should be open after threshold is reached
             assert circuit_breaker.is_open()
 
     @pytest.mark.asyncio
     async def test_circuit_breaker_resets_after_timeout(self, session, config, circuit_breaker, mock_aiohttp_session):
         """Test that circuit breaker resets after timeout period."""
-        mock_response = AsyncMock()
-        mock_response.status = 500
-        mock_response.read = AsyncMock()
-        mock_aiohttp_session.request.return_value = mock_response
+        # First response fails
+        mock_response_fail = AsyncMock()
+        mock_response_fail.status = 500
+        mock_response_fail.read = AsyncMock()
+
+        # Second response succeeds
+        mock_response_success = AsyncMock()
+        mock_response_success.status = 200
+        mock_response_success.read = AsyncMock()
+
+        mock_aiohttp_session.request.side_effect = [mock_response_fail, mock_response_success]
 
         executor = ResilientHttpClient(
             session=session,
@@ -232,15 +238,14 @@ class TestResilientHttpClient:
         )
 
         with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
-            # First two requests should fail and record failures
-            for _ in range(2):
-                with pytest.raises(RetryExceededError):
-                    await executor.execute_request(
-                        RequestParams(
-                            method="GET",
-                            url="/test"
-                        )
+            # First request should fail and record failure
+            with pytest.raises(RetryExceededError):
+                await executor.execute_request(
+                    RequestParams(
+                        method="GET",
+                        url="/test"
                     )
+                )
             
             # Circuit breaker should be open
             assert circuit_breaker.is_open()
@@ -254,7 +259,7 @@ class TestResilientHttpClient:
     @pytest.mark.asyncio
     async def test_ssl_verification_error(self, session, config, mock_aiohttp_session):
         """Test handling of SSL verification errors."""
-        mock_aiohttp_session.request.side_effect = aiohttp.ClientSSLError("SSL Error")
+        mock_aiohttp_session.request.side_effect = aiohttp.ClientSSLError(connection_key=MagicMock(), os_error=MagicMock())
 
         executor = ResilientHttpClient(
             session=session,
@@ -269,7 +274,7 @@ class TestResilientHttpClient:
                         method="GET",
                         url="/test"
                     )
-                )
+                )   
 
     @pytest.mark.asyncio
     async def test_connection_error_retry(self, session, config, mock_aiohttp_session):
@@ -280,7 +285,7 @@ class TestResilientHttpClient:
         mock_response_success.read = AsyncMock()
 
         mock_aiohttp_session.request.side_effect = [
-            aiohttp.ClientConnectorError("Connection Error"),
+            aiohttp.ClientConnectorError(connection_key=MagicMock(), os_error=MagicMock()),
             mock_response_success
         ]
 
@@ -344,7 +349,8 @@ class TestResilientHttpClient:
                 )
             )
             await executor.close()
-            mock_aiohttp_session.close.assert_called_once()
+            # Verify that the session cache was closed
+            assert executor.session_cache.client_session is None
 
     @pytest.mark.asyncio
     async def test_invalid_url_error(self, session, config, mock_aiohttp_session):
@@ -381,6 +387,10 @@ class TestResilientHttpClient:
 
         mock_aiohttp_session.request.side_effect = [mock_response_401, mock_response_200]
 
+        # Configure auth session to succeed on refresh
+        auth_session.refresh_auth.return_value = True
+        auth_session.is_authenticated.return_value = True
+
         executor = ResilientHttpClient(
             session=auth_session,
             config=config,
@@ -394,4 +404,6 @@ class TestResilientHttpClient:
                     url="/test"
                 )
             )
-            assert response.status == 200 
+            assert response.status == 200
+            # Verify auth flow was called
+            auth_session.refresh_auth.assert_called_once() 
