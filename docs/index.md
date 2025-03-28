@@ -1,3 +1,10 @@
+---
+layout: home
+nav_order: 1
+title: "RestBook Documentation"
+permalink: /
+---
+
 # RestBook Documentation
 
 Welcome to the RestBook documentation! This documentation will guide you through using RestBook, a powerful API request orchestration tool for defining and executing complex REST API workflows using declarative YAML playbooks.

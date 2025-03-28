@@ -1,0 +1,42 @@
+title: RestBook Documentation
+description: Documentation for RestBook - A powerful API request orchestration tool
+theme: just-the-docs
+url: https://restbook.github.io
+
+# Aux links for the upper right navigation
+aux_links:
+  "View on GitHub":
+    - "https://github.com/restbook/restbook"
+
+# Makes Aux links open in a new tab
+aux_links_new_tab: true
+
+# Enable search
+search_enabled: true
+
+# Organize collections
+collections:
+  docs:
+    permalink: ":collection/:path/"
+    output: true
+
+# Default layout for pages
+defaults:
+  - scope:
+      path: ""
+      type: docs
+    values:
+      layout: "default"
+      search_exclude: true
+
+# Enable heading anchors
+anchor_heading: true
+
+# Enable copy code button
+copy_code: true
+
+# Enable dark mode
+dark_mode: true
+
+# Enable last modified date
+last_modified_date: true 
