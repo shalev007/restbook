@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from .aio_client_cache import AioSessionCache
 from .circuit_breaker import CircuitBreaker
-from .errors import AuthenticationError, JSONError, RetryExceededError, RetryableError, SSLVerificationError, UnknownError
+from .errors import AuthenticationError, RetryExceededError, RetryableError, SSLVerificationError, UnknownError
 from ..logging import BaseLogger
 from ..session.session import Session
 
@@ -219,25 +219,6 @@ class ResilientHttpClient:
         """
         delay = self.config.backoff_factor * (2 ** attempt)
         await asyncio.sleep(delay)
-
-    def _prepare_data(self, data: Optional[str]) -> Optional[Dict[str, Any]]:
-        """Prepare request data.
-        
-        Args:
-            data: JSON string to convert to dictionary
-            
-        Returns:
-            Optional[Dict[str, Any]]: Parsed JSON data as dictionary
-            
-        Raises:
-            JSONError: If data is not valid JSON
-        """
-        if not data:
-            return None
-        try:
-            return json.loads(data)
-        except json.JSONDecodeError:
-            raise JSONError(f"Data must be in valid JSON format: {data}")
 
     async def close(self):
         """Close the client session cache."""

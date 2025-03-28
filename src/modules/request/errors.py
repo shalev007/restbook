@@ -12,6 +12,3 @@ class UnknownError(Exception):
 
 class SSLVerificationError(Exception):
     pass
-
-class JSONError(Exception):
-    pass
