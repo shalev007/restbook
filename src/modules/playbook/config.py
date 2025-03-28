@@ -70,6 +70,9 @@ class RetryConfig(BaseModel):
     backoff_factor: float = 1.0
     max_delay: Optional[int] = None
     circuit_breaker: Optional[CircuitBreakerConfig] = None
+    use_server_retry_delay: bool = True
+    retry_header: str = "Retry-After"
+
     @model_validator(mode='after')
     def validate_circuit_breaker(self) -> 'RetryConfig':
         if self.circuit_breaker:

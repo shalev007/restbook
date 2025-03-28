@@ -1,11 +1,12 @@
 import asyncio
 import aiohttp
+import time
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 
 from .aio_client_cache import AioSessionCache
 from .circuit_breaker import CircuitBreaker
-from .errors import AuthenticationError, RetryExceededError, RetryableError, SSLVerificationError, UnknownError
+from .errors import AuthenticationError, RateLimitError, RetryExceededError, RetryableError, SSLVerificationError, UnknownError
 from ..logging import BaseLogger
 from ..session.session import Session
 
@@ -15,6 +16,8 @@ class ResilientHttpClientConfig(BaseModel):
     max_retries: int = 1
     backoff_factor: float = 0
     max_delay: Optional[int] = None  # Maximum delay in seconds between retries
+    use_server_retry_delay: bool = True  # Whether to use server's suggested retry delay
+    retry_header: str = "Retry-After"  # Header name for server's retry delay
 
 class RequestParams(BaseModel):
     url: str
@@ -28,11 +31,14 @@ class ResilientHttpClient:
     """Handles HTTP request execution and response processing."""
     
     # Status codes that should trigger retries
-    RETRY_STATUS_CODES: List[int] = [429, 500, 502, 503, 504]
+    RETRY_STATUS_CODES: List[int] = [500, 502, 503, 504]
     
     # Status codes that might indicate auth issues
     AUTH_STATUS_CODES: List[int] = [401, 403]
     
+    # Status code for rate limiting
+    RATE_LIMIT_STATUS: int = 429
+
     def __init__(
         self,
         session: Session,
@@ -106,6 +112,11 @@ class ResilientHttpClient:
                     # Wait for the response body to be fully received
                     await response.read()
                     
+                    # Handle rate limiting
+                    if response.status == self.RATE_LIMIT_STATUS:
+                        self.logger.log_error(f"Hit rate limit, waiting for reset...")
+                        raise RateLimitError(response)
+                        
                     # Handle authentication errors
                     if response.status in self.AUTH_STATUS_CODES:
                         self.logger.log_error(f"Authentication failed with status code {response.status}")
@@ -125,6 +136,11 @@ class ResilientHttpClient:
                         if await self._handle_auth_retry():
                             continue
                         raise AuthenticationError("Authentication failed after retries")
+                except RateLimitError as e:
+                    if attempt < self.config.max_retries:
+                        await self._handle_rate_limit(attempt, e.response)
+                        continue
+                    raise RetryExceededError("Max retries exceeded")
                 except RetryableError:
                     if attempt < self.config.max_retries:
                         # Only record failure if circuit breaker exists
@@ -207,7 +223,7 @@ class ResilientHttpClient:
                 return False
 
     async def _handle_retry_delay(self, attempt: int) -> None:
-        """Handle exponential backoff delay between retries.
+        """Handle retry delay, using server's suggestion if available.
         
         Args:
             attempt: Current retry attempt number
@@ -215,7 +231,53 @@ class ResilientHttpClient:
         delay = self.config.backoff_factor * (2 ** attempt)
         if self.config.max_delay:
             delay = min(delay, self.config.max_delay)
+        self.logger.log_info(f"Using exponential backoff delay: {delay} seconds")
         await asyncio.sleep(delay)
+
+    async def _get_server_retry_delay(self, response: aiohttp.ClientResponse) -> Optional[float]:
+        """Get the server's suggested retry delay from headers.
+        
+        Args:
+            response: The response from the server
+            
+        Returns:
+            Optional[float]: The retry delay in seconds, or None if not specified
+        """
+        if not self.config.use_server_retry_delay:
+            return None
+            
+        retry_after = response.headers.get(self.config.retry_header)
+        if not retry_after:
+            return None
+            
+        try:
+            # Handle both numeric seconds and HTTP date format
+            if retry_after.isdigit():
+                return float(retry_after)
+            else:
+                # Parse HTTP date format
+                retry_time = time.strptime(retry_after, "%a, %d %b %Y %H:%M:%S GMT")
+                retry_timestamp = time.mktime(retry_time)
+                delay = retry_timestamp - time.time()
+                return max(0, delay)
+        except (ValueError, TypeError):
+            self.logger.log_error(f"Invalid {self.config.retry_header} header value: {retry_after}")
+            return None
+
+    async def _handle_rate_limit(self, attempt: int, response: aiohttp.ClientResponse) -> None:
+        """Handle rate limit logic.
+        
+        Args:
+            response: The response from the server
+        """
+        server_delay = await self._get_server_retry_delay(response)
+        if server_delay is not None:
+            self.logger.log_info(f"Using server's suggested retry delay: {server_delay} seconds")
+            await asyncio.sleep(server_delay)
+            return
+
+        # Fall back to exponential backoff
+        await self._handle_retry_delay(attempt)
 
     async def close(self):
         """Close the client session cache."""
