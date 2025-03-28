@@ -1,7 +1,7 @@
 import pytest
 import aiohttp
 from unittest.mock import AsyncMock, patch, MagicMock
-from src.modules.request.executor import RequestExecutor
+from src.modules.request.executor import ResilientHttpClient
 from src.modules.session.session import Session
 from src.modules.session.auth import AuthConfig
 
@@ -36,12 +36,12 @@ def auth_session(session):
 
 @pytest.fixture
 def executor(session):
-    return RequestExecutor(session=session)
+    return ResilientHttpClient(session=session)
 
 
 @pytest.fixture
 def auth_executor(auth_session):
-    return RequestExecutor(session=auth_session)
+    return ResilientHttpClient(session=auth_session)
 
 
 class TestRequestExecutor:
@@ -49,7 +49,7 @@ class TestRequestExecutor:
 
     def test_init_with_custom_options(self, session):
         """Test initialization with custom options."""
-        executor = RequestExecutor(
+        executor = ResilientHttpClient(
             session=session,
             timeout=60,
             verify_ssl=False,
