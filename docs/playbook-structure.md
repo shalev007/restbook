@@ -147,46 +147,6 @@ steps:
 ```
 {% endraw %}
 
-### Environment Variables
-
-RestBook supports environment variable templating throughout the playbook. You can access environment variables using the `env` namespace:
-
-{% raw %}
-```yaml
-# In session configuration
-sessions:
-  api:
-    base_url: "{{ env.API_BASE_URL }}"
-    auth:
-      type: "bearer"
-      credentials:
-        token: "{{ env.API_TOKEN }}"
-
-# In request data
-steps:
-  - session: "api"
-    request:
-      method: POST
-      endpoint: "/users"
-      data:
-        api_key: "{{ env.API_KEY }}"
-        environment: "{{ env.DEPLOY_ENV }}"
-
-# In request parameters
-steps:
-  - session: "api"
-    request:
-      method: GET
-      endpoint: "/search"
-      params:
-        api_version: "{{ env.API_VERSION }}"
-```
-{% endraw %}
-
-Environment variables are loaded from:
-1. System environment variables
-2. CI/CD environment variables
-
 ### Appending to Lists
 
 You can append to list variables across multiple steps:
