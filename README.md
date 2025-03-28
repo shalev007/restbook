@@ -2,7 +2,7 @@
 
 # RestBook
 
-RestBook is a powerful API request orchestration tool that lets you define and execute complex REST API workflows using declarative YAML playbooks. Unlike API testing tools, RestBook **isn’t about testing** endpoints one by one—it’s designed to chain together multiple API calls, manage state between requests, and even resume workflows after failures. With features like parallel execution, incremental execution, advanced authentication (including OAuth2), and recording capabilities, RestBook is built for automation and enterprise-grade integrations.
+RestBook is a powerful API request orchestration tool that lets you define and execute complex REST API workflows using declarative YAML playbooks. Unlike API testing tools, RestBook **isn't about testing** endpoints one by one—it's designed to chain together multiple API calls, manage state between requests, and even resume workflows after failures. With features like parallel execution, incremental execution, advanced authentication (including OAuth2), and recording capabilities, RestBook is built for automation and enterprise-grade integrations.
 
 ## Features
 
@@ -125,8 +125,13 @@ steps:
     retry:
       max_retries: 3
       backoff_factor: 1.0
-      timeout: 10
+      max_delay: 10
+      circuit_breaker:
+        threshold: 2
+        reset: 5
+        jitter: 0.1
     validate_ssl: true
+    timeout: 30
     on_error: abort  # abort or ignore
 ```
 
@@ -239,9 +244,9 @@ steps:
 
 This is useful for collecting data across paginated API responses or from different endpoints for later processing.
 
-### Error Handling
+### Error Handling and Retries
 
-Configure how errors are handled:
+Configure retry behavior and error handling:
 
 ```yaml
 steps:
@@ -252,9 +257,27 @@ steps:
     retry:
       max_retries: 3
       backoff_factor: 1.0
-      timeout: 10
+      max_delay: 10
+      circuit_breaker:
+        threshold: 2
+        reset: 5
+        jitter: 0.1
+    timeout: 30
     on_error: ignore  # Continue on error
 ```
+
+The retry configuration supports:
+- Exponential backoff with configurable factor
+- Maximum delay cap between retries
+- Circuit breaker pattern to prevent cascading failures
+- Random jitter to prevent thundering herd problems
+- Configurable request timeout per step
+
+The circuit breaker will:
+- Open after the specified number of failures
+- Wait for the reset period before allowing new requests
+- Add random jitter to prevent synchronized retries
+- Automatically close after successful requests
 
 ### Incremental Execution
 
