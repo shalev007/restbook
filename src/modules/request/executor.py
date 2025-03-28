@@ -93,20 +93,19 @@ class ResilientHttpClient:
                 response = None
                 try:
                     # Wait if circuit breaker is open instead of throwing an error
-                    while self.circuit_breaker.is_open():
+                    if self.circuit_breaker.is_open():
                         self.logger.log_error(f"Circuit breaker is open, waiting {self.config.circuit_breaker_reset} seconds before next attempt...")
                         await asyncio.sleep(self.config.circuit_breaker_reset)
-                        
-                    # Get fresh headers for each attempt in case of auth refresh
-                    request_headers = await self._prepare_headers(request_params.headers)
                     
+                    params = await self._build_request_params(request_params)
+                    # Get fresh headers for each attempt in case of auth refresh
                     # Make the request
                     response = await client.request(
-                        method=request_params.method,
-                        url=self._build_url(request_params.url),
-                        json=request_params.data,
-                        params=request_params.params,
-                        headers=request_headers,
+                        method=params["method"],
+                        url=params["url"],
+                        json=params["data"],
+                        params=params["params"],
+                        headers=params["headers"],
                         ssl=self.config.verify_ssl
                     )
                     
@@ -158,39 +157,36 @@ class ResilientHttpClient:
                         await self._handle_retry_delay(attempt)
                         continue
                     raise RetryExceededError(f"Request failed after {self.config.max_retries} attempts: {str(err)}")
+                except Exception as err:
+                    self.logger.log_error(f"Unexpected error: {str(err)}")
+                    raise UnknownError(f"Unexpected error: {str(err)}")
 
             raise UnknownError("Request failed in an unexpected way - reached end of retry loop without success or specific error")
         finally:
             # Always close the session after execution
             await self.session_cache.close()
 
-    def _build_url(self, endpoint: str) -> str:
-        """Build the full URL for the request.
+    async def _build_request_params(self, request_params: RequestParams) -> Dict[str, Any]:
+        """Build the request parameters for the request.
         
         Args:
-            endpoint: API endpoint path
-            
-        Returns:
-            str: Full URL including base URL and endpoint
+            request_params: Configuration for the request to execute
         """
-        return f"{self.session.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
 
-    async def _prepare_headers(self, headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
-        """Prepare request headers.
-        
-        Args:
-            headers: Optional dictionary of additional headers to include
-            
-        Returns:
-            Dict[str, str]: Combined headers including authentication
-        """
         request_headers = {}
         if not self.session.is_authenticated():
             await self.session.authenticate()
         request_headers = self.session.get_headers()
-        if headers:
-            request_headers.update(headers)
-        return request_headers
+        if request_params.headers:
+            request_headers.update(request_params.headers)
+
+        return {
+            "url": f"{self.session.base_url.rstrip('/')}/{request_params.url.lstrip('/')}",
+            "method": request_params.method,
+            "headers": request_headers,
+            "data": request_params.data,
+            "params": request_params.params
+        }
 
     async def _handle_auth_retry(self) -> bool:
         """Handle authentication retry logic.
