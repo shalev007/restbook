@@ -1,13 +1,20 @@
 from datetime import datetime, timedelta, UTC
 from typing import Optional
+import random
 
 class CircuitBreaker:
-    def __init__(self, threshold: int, reset_timeout: int):
+    def __init__(self, threshold: int, reset_timeout: int, jitter: float = 0.0):
         self.threshold = threshold
         self.reset_timeout = reset_timeout
+        self.jitter = jitter
         self.failure_count = 0
         self.last_failure_time: Optional[datetime] = None
         self.state = "closed"
+    
+    def get_reset_timeout(self) -> float:
+        if self.jitter:
+            return self.reset_timeout + random.uniform(-self.jitter, self.jitter)
+        return self.reset_timeout
 
     def record_failure(self):
         self.failure_count += 1
@@ -21,7 +28,9 @@ class CircuitBreaker:
 
     def is_open(self) -> bool:
         if self.state == "open" and self.last_failure_time:
-            if datetime.now(UTC) - self.last_failure_time > timedelta(seconds=self.reset_timeout):
+            # Calculate jittered reset timeout
+            jittered_timeout = self.get_reset_timeout()
+            if datetime.now(UTC) - self.last_failure_time > timedelta(seconds=jittered_timeout):
                 self.reset()
                 return False
             return True

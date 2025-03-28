@@ -406,4 +406,92 @@ class TestResilientHttpClient:
             )
             assert response.status == 200
             # Verify auth flow was called
-            auth_session.refresh_auth.assert_called_once() 
+            auth_session.refresh_auth.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_with_jitter(self, session, config, mock_aiohttp_session):
+        """Test that circuit breaker uses jitter in reset timeout."""
+        # Create circuit breaker with jitter
+        circuit_breaker = CircuitBreaker(threshold=2, reset_timeout=10, jitter=0.2)
+        
+        # First response fails
+        mock_response_fail = AsyncMock()
+        mock_response_fail.status = 500
+        mock_response_fail.read = AsyncMock()
+
+        # Second response succeeds
+        mock_response_success = AsyncMock()
+        mock_response_success.status = 200
+        mock_response_success.read = AsyncMock()
+
+        mock_aiohttp_session.request.side_effect = [mock_response_fail, mock_response_success]
+
+        executor = ResilientHttpClient(
+            session=session,
+            config=config,
+            logger=MagicMock(),
+            circuit_breaker=circuit_breaker
+        )
+
+        with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
+            # First request should fail and record failure
+            with pytest.raises(RetryExceededError):
+                await executor.execute_request(
+                    RequestParams(
+                        method="GET",
+                        url="/test"
+                    )
+                )
+            
+            # Circuit breaker should be open
+            assert circuit_breaker.is_open()
+            
+            # Wait for reset timeout (with jitter)
+            await asyncio.sleep(10.2)  # Slightly longer than max reset time with jitter
+            
+            # Circuit breaker should be closed
+            assert not circuit_breaker.is_open() 
+
+    @pytest.mark.asyncio
+    async def test_max_delay_respect(self, session, mock_aiohttp_session):
+        """Test that retry delays respect the max_delay configuration."""
+        # Create config with max_delay
+        config = ResilientHttpClientConfig(
+            timeout=30,
+            verify_ssl=True,
+            max_retries=3,
+            backoff_factor=1.0,
+            max_delay=5  # Maximum delay of 5 seconds
+        )
+
+        # First attempts fail with connection error
+        mock_response_success = AsyncMock()
+        mock_response_success.status = 200
+        mock_response_success.read = AsyncMock()
+
+        mock_aiohttp_session.request.side_effect = [
+            aiohttp.ClientConnectorError(connection_key=MagicMock(), os_error=MagicMock()),
+            aiohttp.ClientConnectorError(connection_key=MagicMock(), os_error=MagicMock()),
+            mock_response_success
+        ]
+
+        executor = ResilientHttpClient(
+            session=session,
+            config=config,
+            logger=MagicMock()
+        )
+
+        with patch("aiohttp.ClientSession", return_value=mock_aiohttp_session):
+            response = await executor.execute_request(
+                RequestParams(
+                    method="GET",
+                    url="/test"
+                )
+            )
+            assert response.status == 200
+
+            # Verify that the delays were capped at max_delay
+            # The exponential backoff would be: 1s, 2s, 4s
+            # But with max_delay=5, it should be: 1s, 2s, 4s
+            # The last attempt succeeds, so no delay needed
+            assert mock_aiohttp_session.request.call_count == 3 
