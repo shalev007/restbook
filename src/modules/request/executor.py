@@ -41,8 +41,8 @@ class ResilientHttpClient:
         session: Session,
         config: ResilientHttpClientConfig,
         logger: BaseLogger,
-        session_cache: Optional[AioSessionCache] = None,
         circuit_breaker: Optional[CircuitBreaker] = None,
+        session_cache: Optional[AioSessionCache] = None,
     ):
         """Initialize the request executor.
         
@@ -56,8 +56,8 @@ class ResilientHttpClient:
         self.session = session
         self.config = config
         self.logger = logger
-        self.session_cache = session_cache or AioSessionCache()
         self.circuit_breaker = circuit_breaker  # Allow it to be None
+        self.session_cache = session_cache or AioSessionCache()
         
 
     async def execute_request(
