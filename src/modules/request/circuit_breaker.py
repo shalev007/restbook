@@ -13,7 +13,7 @@ class CircuitBreaker:
     
     def get_reset_timeout(self) -> float:
         if self.jitter:
-            return self.reset_timeout + random.uniform(-self.jitter, self.jitter)
+            return self.reset_timeout + random.uniform(0, self.jitter)
         return self.reset_timeout
 
     def record_failure(self):
