@@ -1,8 +1,6 @@
-import json
 import asyncio
 import aiohttp
-from typing import Optional, Dict, Any, NoReturn, List
-from aiohttp import ClientTimeout
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 
 from .aio_client_cache import AioSessionCache
@@ -16,8 +14,6 @@ class ResilientHttpClientConfig(BaseModel):
     verify_ssl: bool = True
     max_retries: int = 3
     backoff_factor: float = 0.5
-    circuit_breaker_threshold: int = 3   # number of failures before opening the circuit
-    circuit_breaker_reset: int = 10      # seconds to wait before resetting circuit breaker
 
 class RequestParams(BaseModel):
     url: str
@@ -91,8 +87,8 @@ class ResilientHttpClient:
                 try:
                     # Only check circuit breaker if it exists
                     if self.circuit_breaker and self.circuit_breaker.is_open():
-                        self.logger.log_error(f"Circuit breaker is open, waiting {self.config.circuit_breaker_reset} seconds before next attempt...")
-                        await asyncio.sleep(self.config.circuit_breaker_reset)
+                        self.logger.log_error(f"Circuit breaker is open, waiting {self.circuit_breaker.reset_timeout} seconds before next attempt...")
+                        await asyncio.sleep(self.circuit_breaker.reset_timeout)
                     
                     params = await self._build_request_params(request_params)
                     # Get fresh headers for each attempt in case of auth refresh
