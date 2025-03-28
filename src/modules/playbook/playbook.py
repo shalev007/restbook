@@ -391,8 +391,8 @@ class Playbook:
             max_retries=retry_config.max_retries,
             backoff_factor=retry_config.backoff_factor,
             max_delay=retry_config.max_delay,
-            use_server_retry_delay=retry_config.use_server_retry_delay,
-            retry_header=retry_config.retry_header
+            use_server_retry_delay=retry_config.rate_limit.use_server_retry_delay,
+            retry_header=retry_config.rate_limit.retry_header
         )
 
         # Create circuit breaker if configured
