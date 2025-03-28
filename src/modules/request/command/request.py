@@ -1,8 +1,6 @@
 import asyncio
 import json
-import click
-import os
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any
 
 from prompt_toolkit import prompt
 from prompt_toolkit.completion import WordCompleter, Completer, Completion
@@ -13,7 +11,7 @@ from ...logging import BaseLogger
 from ...session.session_store import SessionStore
 from ...session.session import Session
 from ...session.swagger.client import SwaggerClient
-from ..executor import RequestExecutor
+from ..resilient_http_client import ResilientHttpClient, ResilientHttpClientConfig, RequestParams
 
 
 class EndpointCompleter(Completer):
@@ -67,7 +65,8 @@ class RequestCommand:
         timeout: int = 30,
         verify_ssl: bool = True,
         max_retries: int = 3,
-        backoff_factor: float = 0.5
+        backoff_factor: float = 0.5,
+        max_delay: Optional[int] = None
     ):
         """
         Initialize the request command.
@@ -79,6 +78,7 @@ class RequestCommand:
             verify_ssl: Whether to verify SSL certificates
             max_retries: Maximum number of retries
             backoff_factor: Backoff factor for retries
+            max_delay: Maximum delay between retries in seconds
         """
         self.logger = logger
         self.session_store = session_store
@@ -86,6 +86,7 @@ class RequestCommand:
         self.verify_ssl = verify_ssl
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
+        self.max_delay = max_delay
     
     async def execute_request(
         self,
@@ -124,21 +125,27 @@ class RequestCommand:
             self.logger.log_info(json.dumps(data, indent=2))
         
         # Create executor with session data and options
-        executor = RequestExecutor(
+        executor = ResilientHttpClient(
             session=session,
-            timeout=self.timeout,
-            verify_ssl=self.verify_ssl,
-            max_retries=self.max_retries,
-            backoff_factor=self.backoff_factor
+            config=ResilientHttpClientConfig(
+                timeout=self.timeout,
+                verify_ssl=self.verify_ssl,
+                max_retries=self.max_retries,
+                backoff_factor=self.backoff_factor,
+                max_delay=self.max_delay
+            ),
+            logger=self.logger
         )
         
         try:
             # Execute request
             response = await executor.execute_request(
-                method=method,
-                endpoint=endpoint,
-                data=data,
-                headers=headers
+                RequestParams(
+                    method=method,
+                    url=endpoint,
+                    data=data,
+                    headers=headers
+                )
             )
 
             # Log response

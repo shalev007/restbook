@@ -16,7 +16,7 @@ phases:
         retry:
           max_retries: 3
           backoff_factor: 1.0
-          timeout: 10
+        timeout: 10
         validate_ssl: true
         on_error: abort
 
@@ -36,7 +36,7 @@ phases:
         retry:
           max_retries: 2
           backoff_factor: 0.5
-          timeout: 5
+        timeout: 5
         validate_ssl: true
         on_error: abort
 
@@ -58,6 +58,6 @@ phases:
         retry:
           max_retries: 3
           backoff_factor: 1.0
-          timeout: 10
+        timeout: 10
         validate_ssl: true
         on_error: ignore
