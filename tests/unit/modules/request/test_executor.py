@@ -1,7 +1,7 @@
 import pytest
 import aiohttp
 from unittest.mock import AsyncMock, patch, MagicMock
-from src.modules.request.executor import ResilientHttpClient
+from src.modules.request.resilient_http_client import ResilientHttpClient
 from src.modules.session.session import Session
 from src.modules.session.auth import AuthConfig
 
