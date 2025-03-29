@@ -57,7 +57,7 @@ phases:
 
 Save this as `books.yml` and run it with:
 ```bash
-restbook run books.yml
+restbook playbook run books.yml
 ```
 
 This example:
