@@ -346,8 +346,17 @@ class Playbook:
                     for task in tasks:
                         await task
             else:
+                context = {
+                    **self.variables.get_all(),
+                }
+                rendered_step = step.model_copy(deep=True)
+                rendered_step.request = self._render_request_config(step.request, context)
+                if step.store:
+                    rendered_step.store = [self._render_store_config(store, context) for store in step.store]
+                else:
+                    rendered_step.store = None
                 # Execute step directly if no iteration is configured
-                await self._execute_single_step(step, session_store)
+                await self._execute_single_step(rendered_step, session_store)
 
         except Exception as e:
             if step.on_error == "ignore":
