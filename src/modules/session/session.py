@@ -4,7 +4,14 @@ from dataclasses import dataclass
 from typing import Dict, Any, Optional
 from .auth import AuthConfig, create_authenticator, Authenticator
 from .swagger import SwaggerClient, SwaggerClientFactory
+from ..request.circuit_breaker import CircuitBreaker
 
+@dataclass
+class RetryConfig:
+    """Simple retry configuration for sessions."""
+    max_retries: int = 2
+    backoff_factor: float = 1.0
+    max_delay: Optional[int] = None
 
 @dataclass
 class Session:
@@ -13,6 +20,10 @@ class Session:
     base_url: str
     auth_config: Optional[AuthConfig] = None
     swagger_spec_path: Optional[str] = None
+    retry_config: Optional[RetryConfig] = None
+    validate_ssl: Optional[bool] = None
+    timeout: Optional[int] = None
+    circuit_breaker: Optional[CircuitBreaker] = None
     
     def __post_init__(self):
         """Initialize the authenticator if auth config is provided."""
@@ -91,11 +102,33 @@ class Session:
                 credentials=data['auth']['credentials']
             )
         
+        retry_config = None
+        if 'retry' in data and data['retry'] is not None:
+            retry_data = data['retry']
+            retry_config = RetryConfig(
+                max_retries=retry_data.get('max_retries', 2),
+                backoff_factor=retry_data.get('backoff_factor', 1.0),
+                max_delay=retry_data.get('max_delay')
+            )
+        
+        circuit_breaker = None
+        if 'circuit_breaker' in data and data['circuit_breaker'] is not None:
+            cb_data = data['circuit_breaker']
+            circuit_breaker = CircuitBreaker(
+                threshold=cb_data.get('threshold', 2),
+                reset_timeout=cb_data.get('reset', 10),
+                jitter=cb_data.get('jitter', 0.0)
+            )
+        
         return cls(
             name=name,
             base_url=data['base_url'],
             auth_config=auth_config,
-            swagger_spec_path=data.get('swagger_spec_path')
+            swagger_spec_path=data.get('swagger_spec_path'),
+            retry_config=retry_config,
+            validate_ssl=data.get('validate_ssl'),
+            timeout=data.get('timeout'),
+            circuit_breaker=circuit_breaker
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -104,11 +137,36 @@ class Session:
             'base_url': self.base_url,
             'auth': None
         }
+        
         if self.auth_config:
             data['auth'] = {
                 'type': self.auth_config.type,
                 'credentials': self.auth_config.credentials
             }
+            
+        if self.retry_config:
+            retry_data: Dict[str, Any] = {
+                'max_retries': self.retry_config.max_retries,
+                'backoff_factor': self.retry_config.backoff_factor
+            }
+            if self.retry_config.max_delay is not None:
+                retry_data['max_delay'] = self.retry_config.max_delay
+            data['retry'] = retry_data
+            
+        if self.circuit_breaker:
+            data['circuit_breaker'] = {
+                'threshold': self.circuit_breaker.threshold,
+                'reset': self.circuit_breaker.reset_timeout,
+                'jitter': self.circuit_breaker.jitter
+            }
+            
+        if self.validate_ssl is not None:
+            data['validate_ssl'] = self.validate_ssl
+            
+        if self.timeout is not None:
+            data['timeout'] = self.timeout
+            
         if self.swagger_spec_path:
             data['swagger_spec_path'] = self.swagger_spec_path
+            
         return data
