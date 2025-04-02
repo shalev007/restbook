@@ -2,9 +2,11 @@ import click
 import json
 import asyncio
 from typing import Dict, Any
+from prompt_toolkit import prompt
 from ..logging import BaseLogger
 from .session_store import SessionStore
 from .swagger import SwaggerParser, SwaggerParserError, SwaggerSpec
+from .command.create_session import CreateSessionCommand
 
 def create_session_commands() -> click.Group:
     """Create the session command group."""
@@ -16,7 +18,8 @@ def create_session_commands() -> click.Group:
 
     @session.command(name='create')
     @click.argument('name')
-    @click.argument('base_url')
+    @click.option('-i', '--interactive', is_flag=True, help='Run in interactive mode')
+    @click.option('--base-url', help='Base URL for the API')
     @click.option('--auth-type', 
                  type=click.Choice(['bearer', 'basic', 'oauth2', 'api_key']),
                  help='Authentication type')
@@ -29,32 +32,33 @@ def create_session_commands() -> click.Group:
                       '"scope": "read write"}\n'
                       'API Key: {"api_key": "my-api-key", "header_name": "X-API-Key"}')
     @click.pass_context
-    def create(ctx, name: str, base_url: str, auth_type: str | None = None,
-               auth_credentials: str | None = None) -> None:
+    def create(ctx, name: str, interactive: bool, base_url: str | None = None,
+               auth_type: str | None = None, auth_credentials: str | None = None) -> None:
         """
         Create a new session.
         
         Examples:
-            # Create a session without authentication
-            restbook session create my-api https://api.example.com
-
             # Create a session with api key
-            restbook session create my-api https://api.example.com \\
+            restbook session create my-api \\
+                --base-url https://api.example.com \\
                 --auth-type api_key \\
                 --auth-credentials '{"api_key": "my-api-key", "header_name": "X-API-Key"}'
 
             # Create a session with bearer token
-            restbook session create my-api https://api.example.com \\
+            restbook session create my-api \\
+                --base-url https://api.example.com \\
                 --auth-type bearer \\
                 --auth-credentials '{"token": "my-token"}'
             
             # Create a session with basic auth
-            restbook session create my-api https://api.example.com \\
+            restbook session create my-api \\
+                --base-url https://api.example.com \\
                 --auth-type basic \\
                 --auth-credentials '{"username": "user", "password": "pass"}'
             
             # Create a session with OAuth2
-            restbook session create my-api https://api.example.com \\
+            restbook session create my-api \\
+                --base-url https://api.example.com \\
                 --auth-type oauth2 \\
                 --auth-credentials '{
                     "client_id": "id",
@@ -62,23 +66,41 @@ def create_session_commands() -> click.Group:
                     "token_url": "https://auth.example.com/token",
                     "scope": "read write"
                 }'
+
+            # Create a session interactively
+            restbook session create my-api -i
         """
         try:
             session_store: SessionStore = ctx.obj.session_store
             logger: BaseLogger = ctx.obj.logger
             
-            # Prepare session data
-            session_data = {
-                'base_url': base_url,
-                'auth': {
-                    'type': auth_type,
-                    'credentials': json.loads(auth_credentials)
-                } if auth_type and auth_credentials else None
-            }
+            # Create session command
+            session_command = CreateSessionCommand(logger, session_store)
             
-            # Create session
-            session_store.upsert_session(name, json.dumps(session_data))
-            logger.log_info(f"Session '{name}' created successfully")
+            if interactive:
+                # Run interactive mode
+                session_command.create_session(name, interactive)
+            else:
+                # Prepare session data
+                if not base_url:
+                    logger.log_error("Base URL is required in non-interactive mode")
+                    return
+                    
+                session_data = {
+                    'base_url': base_url,
+                    'auth': {
+                        'type': auth_type,
+                        'credentials': json.loads(auth_credentials)
+                    } if auth_type and auth_credentials else None
+                }
+                
+                # Create session
+                session_store.upsert_session(name, json.dumps(session_data))
+                logger.log_info(f"Session '{name}' created successfully")
+                
+                # Test authentication if configured
+                if auth_type and prompt("Test authentication? (y/N): ", default="N").lower() == 'y':
+                    session_command.test_authentication(name)
             
         except Exception as e:
             logger.log_error(str(e))
