@@ -35,6 +35,16 @@ sessions:
         scopes:
           - "read"
           - "write"
+    retry:
+      max_retries: 2
+      backoff_factor: 1.0
+      max_delay: 10
+    circuit_breaker:
+      threshold: 2
+      reset: 10
+      jitter: 0.0
+    validate_ssl: true
+    timeout: 30
 ```
 {% endraw %}
 ### Session Configuration Options
@@ -43,6 +53,44 @@ sessions:
 - `auth`: Authentication configuration
   - `type`: Authentication type (none, bearer, basic, oauth2)
   - `credentials`: Authentication credentials
+- `retry`: Default retry configuration for all requests in this session
+  - `max_retries`: Maximum number of retries (default: 2)
+  - `backoff_factor`: Exponential backoff factor (default: 1.0)
+  - `max_delay`: Maximum delay between retries
+- `circuit_breaker`: Default circuit breaker configuration
+  - `threshold`: Number of failures before opening the circuit (default: 2)
+  - `reset`: Seconds to wait before resetting circuit breaker (default: 10)
+  - `jitter`: Random jitter factor (0.0 to 1.0) to add to reset time (default: 0.0)
+- `validate_ssl`: SSL validation setting (default: true)
+- `timeout`: Request timeout in seconds (default: 30)
+
+All session-level configurations can be overridden at the step level. When a step specifies a configuration, it takes precedence over the session's configuration. For example:
+
+```yaml
+sessions:
+  my_api:
+    base_url: "https://api.example.com"
+    retry:
+      max_retries: 3
+      backoff_factor: 2.0
+      max_delay: 60
+    circuit_breaker:
+      threshold: 2
+      reset: 10
+    validate_ssl: true
+    timeout: 30
+
+steps:
+  - session: "my_api"
+    request:
+      method: GET
+      endpoint: "/users"
+    retry:
+      max_retries: 5  # Overrides session's max_retries
+    # Other retry settings will use session's values
+    timeout: 60  # Overrides session's timeout
+    # validate_ssl will use session's value
+```
 
 ## Phases
 
