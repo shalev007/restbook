@@ -35,9 +35,6 @@ class AuthConfig(BaseModel):
     type: AuthType = AuthType.NONE
     credentials: Optional[AuthCredentials] = None
 
-class SessionConfig(BaseModel):
-    base_url: str
-    auth: Optional[AuthConfig] = None
 
 class RequestConfig(BaseModel):
     method: MethodConfig = MethodConfig.GET  # Defaults to GET if not provided.
@@ -89,6 +86,13 @@ class RetryConfig(BaseModel):
 class OnErrorConfig(str, Enum):
     IGNORE = "ignore"
     ABORT = "abort"
+
+class SessionConfig(BaseModel):
+    base_url: str
+    auth: Optional[AuthConfig] = None
+    retry: Optional[RetryConfig] = None
+    validate_ssl: bool = True
+    timeout: int = 30
 
 class StepConfig(BaseModel):
     session: str

@@ -390,28 +390,44 @@ class Playbook:
         else:
             session = session_store.get_session(step.session)
 
-        # Create request execution config
-        retry_config = step.retry or RetryConfig()
-        circuit_breaker_config = retry_config.circuit_breaker
+        # Merge session and step configurations
+        # Start with session's retry config as base, or default values
+        base_retry = RetryConfig(
+            max_retries=session.retry_config.max_retries if session.retry_config else 2,
+            backoff_factor=session.retry_config.backoff_factor if session.retry_config else 1.0,
+            max_delay=session.retry_config.max_delay if session.retry_config else None
+        )
+        
+        # Override with step's retry config if provided
+        retry_config = RetryConfig(
+            max_retries=step.retry.max_retries if step.retry else base_retry.max_retries,
+            backoff_factor=step.retry.backoff_factor if step.retry else base_retry.backoff_factor,
+            max_delay=step.retry.max_delay if step.retry else base_retry.max_delay
+        )
+        
+        validate_ssl = step.validate_ssl if step.validate_ssl is not None else (session.validate_ssl if session.validate_ssl is not None else True)
+        timeout = step.timeout if step.timeout is not None else (session.timeout if session.timeout is not None else 30)
+        
+        # Use step's circuit breaker config if provided, otherwise use session's circuit breaker
+        circuit_breaker = None
+        if step.retry and step.retry.circuit_breaker:
+            circuit_breaker = CircuitBreaker(
+                threshold=step.retry.circuit_breaker.threshold,
+                reset_timeout=step.retry.circuit_breaker.reset,
+                jitter=step.retry.circuit_breaker.jitter
+            )
+        elif session.circuit_breaker:
+            circuit_breaker = session.circuit_breaker
         
         execution_config = ResilientHttpClientConfig(
-            timeout=step.timeout,
-            verify_ssl=step.validate_ssl,
+            timeout=timeout,
+            verify_ssl=validate_ssl,
             max_retries=retry_config.max_retries,
             backoff_factor=retry_config.backoff_factor,
             max_delay=retry_config.max_delay,
             use_server_retry_delay=retry_config.rate_limit.use_server_retry_delay,
             retry_header=retry_config.rate_limit.retry_header
         )
-
-        # Create circuit breaker if configured
-        circuit_breaker = None
-        if circuit_breaker_config:
-            circuit_breaker = CircuitBreaker(
-                threshold=circuit_breaker_config.threshold,
-                reset_timeout=circuit_breaker_config.reset,
-                jitter=circuit_breaker_config.jitter
-            )
 
         # Convert playbook request config to executor request config
         request_config = self._convert_to_executor_config(step.request)
