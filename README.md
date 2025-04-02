@@ -1,7 +1,8 @@
 <!-- ![restbook-logo2](https://github.com/user-attachments/assets/1f22790b-8829-4cae-a33f-3d499cfc1ea3) -->
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/191aa5e8-a672-492f-8596-8ae83ba23706">
+  <img alt="logo" src="https://github.com/user-attachments/assets/632e61fe-628e-4991-b88c-438cf9509699">
 </p>
+
 RestBook
 
 RestBook is a powerful API request orchestration tool that lets you define and execute complex REST API workflows using declarative YAML playbooks. Unlike API testing tools, RestBook **isn't about testing** endpoints one by one—it's designed to chain together multiple API calls, manage state between requests, and even resume workflows after failures.
