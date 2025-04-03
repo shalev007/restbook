@@ -1,0 +1,111 @@
+# Example playbook demonstrating metrics collection
+# This playbook performs a series of API requests and collects metrics using different collectors
+
+# Enable metrics collection
+metrics:
+  enabled: true
+  collector: json  # Options: json, prometheus, console
+  # JSON collector configuration
+  output_file: "metrics_output.json"
+  # Prometheus collector configuration (uncomment to use)
+  # collector: prometheus
+  # push_gateway: "http://localhost:9091"
+  # job_name: "restbook_example"
+  # Console collector configuration (uncomment to use)
+  # collector: console
+  # verbosity: "detailed"  # Options: basic, detailed
+
+# Session configuration
+sessions:
+  json-placeholder:
+    base_url: "https://jsonplaceholder.typicode.com"
+    # Session-level retry configuration (will be used as defaults)
+    retry:
+      max_retries: 2
+      backoff_factor: 1.0
+      max_delay: 5
+    # Session-level circuit breaker configuration
+    circuit_breaker:
+      threshold: 5
+      reset: 60
+      jitter: 0.1
+    validate_ssl: true
+    timeout: 30
+
+# Phases to execute
+phases:
+  - name: "Initialization"
+    steps:
+      - session: json-placeholder
+        request:
+          method: GET
+          endpoint: "/users"
+          headers:
+            Accept: "application/json"
+        store:
+          - var: "users"
+            jq: "map(.id)"
+        # Step-level retry configuration (overrides session defaults)
+        retry:
+          max_retries: 3
+          backoff_factor: 1.0
+        timeout: 10
+        validate_ssl: true
+        on_error: abort
+
+  - name: "Fetch User Details"
+    parallel: true  # Execute steps in parallel
+    steps:
+      - session: json-placeholder
+        iterate: "user_id in users"
+        request:
+          method: GET
+          endpoint: "/users/{{ user_id }}"
+          params:
+            details: "full"
+        store:
+          - var: "user_{{ user_id }}_details"
+            jq: "."
+        # Step-level retry configuration
+        retry:
+          max_retries: 2
+          backoff_factor: 0.5
+        timeout: 5
+        validate_ssl: true
+        on_error: abort
+
+  - name: "Create Posts"
+    steps:
+      - session: json-placeholder
+        parallel: true
+        iterate: "user_id in users"
+        request:
+          method: POST
+          endpoint: "/posts"
+          data:
+            title: "Post by user {{ user_id }}"
+            body: "This is a test post for user {{ user_id }}."
+            userId: "{{ user_id }}"
+        store:
+          - var: "post_{{ user_id }}_id"
+            jq: ".id"
+        # Step-level retry configuration
+        retry:
+          max_retries: 3
+          backoff_factor: 1.0
+        timeout: 10
+        validate_ssl: true
+        on_error: ignore
+
+  - name: "Simulate Errors"
+    steps:
+      - session: json-placeholder
+        request:
+          method: GET
+          endpoint: "/nonexistent-endpoint"
+        retry:
+          max_retries: 2
+          backoff_factor: 1.0
+        timeout: 5
+        validate_ssl: true
+        on_error: ignore  # Continue execution even if this step fails 

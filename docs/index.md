@@ -45,13 +45,15 @@ RestBook is a powerful API request orchestration tool that lets you define and e
 ### Key Features
 
 - **YAML-Based Playbooks**: Define your API workflows in simple, readable YAML files
-- **Session Management**: Reuse authenticated sessions across requests with support for environment variables
-- **Parallel Execution**: Run steps and iterations concurrently for improved performance
-- **Response Processing**: Extract and store data from responses using JQ queries
-- **Variable System**: Store and reuse data between steps with Jinja2 templating
-- **Flexible Configuration**: Customize retry policies, SSL verification, and error handling
-- **Comprehensive Logging**: Detailed logging of requests, responses, and operations
-- **CI/CD Ready**: Support for environment variables in configuration
+- **Session Management**: Configure and reuse API sessions with authentication
+- **Phased Execution**: Organize requests into logical phases
+- **Variable Management**: Store and reuse data between requests
+- **Template Rendering**: Use variables in requests with template syntax
+- **Parallel Execution**: Run requests in parallel for improved performance
+- **Incremental Execution**: Resume playbooks from checkpoints
+- **Resilient HTTP Client**: Automatic retries, circuit breaking, and rate limiting
+- **Metrics Collection**: Monitor and analyze playbook performance
+- **Extensible Architecture**: Add custom authentication and checkpoint stores
 
 ## Documentation Status
 
