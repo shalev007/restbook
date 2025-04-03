@@ -4,6 +4,7 @@ import os
 from typing import Dict, Any, Optional, List, Union
 import asyncio
 import jq  # type: ignore
+from datetime import datetime
 
 from src.modules.session.session import Session
 
@@ -19,6 +20,11 @@ from ..session.session_store import SessionStore
 from ..logging import BaseLogger
 from ..request.resilient_http_client import RequestParams, ResilientHttpClient, ResilientHttpClientConfig
 from ..request.circuit_breaker import CircuitBreaker
+from ..metrics import (
+    MetricsCollector, RequestMetrics, StepMetrics, PhaseMetrics, PlaybookMetrics,
+    create_metrics_collector
+)
+
 class Playbook:
     """Represents a playbook that can be executed."""
     
@@ -44,6 +50,12 @@ class Playbook:
             self.content_hash = self._generate_content_hash()
             self.checkpoint_store = create_checkpoint_store(self.config.incremental)
             logger.log_info(f"Incremental execution enabled. Content hash: {self.content_hash}")
+            
+        # Initialize metrics collector if enabled
+        self.metrics_collector: Optional[MetricsCollector] = None
+        if self.config.metrics and self.config.metrics.enabled:
+            self.metrics_collector = create_metrics_collector(self.config.metrics)
+            logger.log_info(f"Metrics collection enabled with collector type: {self.config.metrics.collector}")
 
     def _generate_content_hash(self) -> str:
         """Generate a hash of the playbook content."""
@@ -227,6 +239,12 @@ class Playbook:
             ValueError: If the session does not exist
             aiohttp.ClientError: If any request fails
         """
+        playbook_start_time = datetime.now()
+        total_requests = 0
+        successful_requests = 0
+        failed_requests = 0
+        phases_metrics = []
+        
         try:
             # Check for checkpoint if incremental is enabled
             checkpoint = None
@@ -248,6 +266,9 @@ class Playbook:
                     
                 self.logger.log_info(f"Executing phase {phase_index}: {phase.name}")
                 
+                phase_start_time = datetime.now()
+                phase_steps_metrics = []
+                
                 if phase.parallel:
                     # For parallel execution, we need to handle checkpoints differently
                     if checkpoint and phase_index == checkpoint.current_phase:
@@ -261,7 +282,19 @@ class Playbook:
                         self._execute_step(step, session_store)
                         for step in phase.steps
                     ]
-                    await asyncio.gather(*tasks)
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    
+                    # Process results for metrics
+                    for step_index, result in enumerate(results):
+                        if isinstance(result, BaseException):
+                            failed_requests += 1
+                            self.logger.log_error(f"Step {step_index} failed: {str(result)}")
+                        else:
+                            step_metrics, req_count, success_count, fail_count = result
+                            phase_steps_metrics.append(step_metrics)
+                            total_requests += req_count
+                            successful_requests += success_count
+                            failed_requests += fail_count
                     
                     # Save checkpoint after parallel phase
                     await self._save_checkpoint(phase_index, len(phase.steps) - 1)
@@ -273,10 +306,31 @@ class Playbook:
                             self.logger.log_info(f"Skipping step {step_index} (already completed)")
                             continue
                             
-                        await self._execute_step(step, session_store)
+                        result = await self._execute_step(step, session_store)
+                        step_metrics, req_count, success_count, fail_count = result
+                        phase_steps_metrics.append(step_metrics)
+                        total_requests += req_count
+                        successful_requests += success_count
+                        failed_requests += fail_count
                         
                         # Save checkpoint after each step
                         await self._save_checkpoint(phase_index, step_index)
+                
+                # Record phase metrics
+                phase_end_time = datetime.now()
+                phase_duration_ms = (phase_end_time - phase_start_time).total_seconds() * 1000
+                phase_metrics = PhaseMetrics(
+                    name=phase.name,
+                    start_time=phase_start_time,
+                    end_time=phase_end_time,
+                    duration_ms=phase_duration_ms,
+                    steps=phase_steps_metrics,
+                    parallel=bool(phase.parallel)  # Convert to bool to satisfy type hint
+                )
+                phases_metrics.append(phase_metrics)
+                
+                if self.metrics_collector:
+                    self.metrics_collector.record_phase(phase_metrics)
             
             # Clear checkpoint after successful execution
             await self._clear_checkpoint()
@@ -287,23 +341,83 @@ class Playbook:
         finally:
             # Clean up temporary sessions
             self._temp_sessions.clear()
+            
+            # Record playbook metrics
+            if self.metrics_collector:
+                playbook_end_time = datetime.now()
+                playbook_duration_ms = (playbook_end_time - playbook_start_time).total_seconds() * 1000
+                playbook_metrics = PlaybookMetrics(
+                    start_time=playbook_start_time,
+                    end_time=playbook_end_time,
+                    duration_ms=playbook_duration_ms,
+                    phases=phases_metrics,
+                    total_requests=total_requests,
+                    successful_requests=successful_requests,
+                    failed_requests=failed_requests,
+                    total_duration_ms=playbook_duration_ms
+                )
+                self.metrics_collector.record_playbook(playbook_metrics)
+                self.metrics_collector.finalize()
 
     async def _execute_phase(self, phase: PhaseConfig, session_store: SessionStore) -> None:
         """Execute a single phase of the playbook."""
+        phase_start_time = datetime.now()
+        phase_steps_metrics = []
+        
         if phase.parallel:
             # Execute steps in parallel
             tasks = [
                 self._execute_step(step, session_store)
                 for step in phase.steps
             ]
-            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Process results for metrics
+            for result in results:
+                if isinstance(result, BaseException):
+                    self.logger.log_error(f"Step failed: {str(result)}")
+                else:
+                    step_metrics, _, _, _ = result
+                    phase_steps_metrics.append(step_metrics)
         else:
             # Execute steps sequentially
             for step in phase.steps:
-                await self._execute_step(step, session_store)
+                result = await self._execute_step(step, session_store)
+                step_metrics, _, _, _ = result
+                phase_steps_metrics.append(step_metrics)
+        
+        # Record phase metrics
+        phase_end_time = datetime.now()
+        phase_duration_ms = (phase_end_time - phase_start_time).total_seconds() * 1000
+        phase_metrics = PhaseMetrics(
+            name=phase.name,
+            start_time=phase_start_time,
+            end_time=phase_end_time,
+            duration_ms=phase_duration_ms,
+            steps=phase_steps_metrics,
+            parallel=bool(phase.parallel)  # Convert to bool to satisfy type hint
+        )
+        
+        if self.metrics_collector:
+            self.metrics_collector.record_phase(phase_metrics)
 
-    async def _execute_step(self, step: StepConfig, session_store: SessionStore) -> None:
-        """Execute a single step of the playbook."""
+    async def _execute_step(self, step: StepConfig, session_store: SessionStore) -> tuple[StepMetrics, int, int, int]:
+        """
+        Execute a single step of the playbook.
+        
+        Returns:
+            Tuple containing:
+            - StepMetrics: Metrics for the step
+            - int: Total number of requests
+            - int: Number of successful requests
+            - int: Number of failed requests
+        """
+        step_start_time = datetime.now()
+        total_requests = 0
+        successful_requests = 0
+        failed_requests = 0
+        request_metrics_list: List[RequestMetrics] = []
+        
         try:
             if step.iterate:
                 # Parse iteration configuration
@@ -340,11 +454,28 @@ class Playbook:
                 # Execute iterations based on parallel flag
                 if step.parallel:
                     self.logger.log_info(f"Executing {len(tasks)} iterations in parallel")
-                    await asyncio.gather(*tasks)
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    
+                    # Process results for metrics
+                    for result in results:
+                        if isinstance(result, BaseException):
+                            failed_requests += 1
+                            self.logger.log_error(f"Iteration failed: {str(result)}")
+                        else:
+                            req_metrics, req_count, success_count, fail_count = result
+                            request_metrics_list.append(req_metrics)
+                            total_requests += req_count
+                            successful_requests += success_count
+                            failed_requests += fail_count
                 else:
                     self.logger.log_info(f"Executing {len(tasks)} iterations sequentially")
                     for task in tasks:
-                        await task
+                        result = await task
+                        req_metrics, req_count, success_count, fail_count = result
+                        request_metrics_list.append(req_metrics)
+                        total_requests += req_count
+                        successful_requests += success_count
+                        failed_requests += fail_count
             else:
                 context = {
                     **self.variables.get_all(),
@@ -356,34 +487,55 @@ class Playbook:
                 else:
                     rendered_step.store = None
                 # Execute step directly if no iteration is configured
-                await self._execute_single_step(rendered_step, session_store)
+                result = await self._execute_single_step(rendered_step, session_store)
+                req_metrics, req_count, success_count, fail_count = result
+                request_metrics_list.append(req_metrics)
+                total_requests += req_count
+                successful_requests += success_count
+                failed_requests += fail_count
 
         except Exception as e:
             if step.on_error == "ignore":
                 self.logger.log_info(f"Step failed but continuing: {str(e)}")
+                failed_requests += 1
             else:
                 raise
-
-    def _convert_to_executor_config(self, playbook_config: RequestConfig) -> RequestParams:
-        """Convert a playbook request config to an executor request config.
         
-        Args:
-            playbook_config: The playbook's request configuration
-            
-        Returns:
-            RequestParams: The executor's request configuration
-        """
-        
-        return RequestParams(
-            url=playbook_config.endpoint,
-            method=playbook_config.method.value,
-            headers=playbook_config.headers,
-            data=playbook_config.data,
-            params=playbook_config.params
+        # Create step metrics
+        step_end_time = datetime.now()
+        step_duration_ms = (step_end_time - step_start_time).total_seconds() * 1000
+        step_metrics = StepMetrics(
+            session=step.session,
+            request=request_metrics_list[0] if request_metrics_list else RequestMetrics(
+                method=step.request.method.value,
+                endpoint=step.request.endpoint,
+                start_time=step_start_time,
+                end_time=step_end_time,
+                status_code=0,
+                duration_ms=step_duration_ms,
+                success=False,
+                error="No requests executed"
+            ),
+            retry_count=0,  # This would need to be tracked in the request execution
+            store_vars=[store.var for store in (step.store or [])]
         )
+        
+        if self.metrics_collector:
+            self.metrics_collector.record_step(step_metrics)
+        
+        return step_metrics, total_requests, successful_requests, failed_requests
 
-    async def _execute_single_step(self, step: StepConfig, session_store: SessionStore) -> None:
-        """Execute a single step without iteration."""
+    async def _execute_single_step(self, step: StepConfig, session_store: SessionStore) -> tuple[RequestMetrics, int, int, int]:
+        """
+        Execute a single step without iteration.
+        
+        Returns:
+            Tuple containing:
+            - RequestMetrics: Metrics for the request
+            - int: Total number of requests (always 1 for this method)
+            - int: Number of successful requests
+            - int: Number of failed requests
+        """
         # Get session for this step
         if step.session in self._temp_sessions:
             session = self._temp_sessions[step.session]
@@ -440,9 +592,16 @@ class Playbook:
             circuit_breaker=circuit_breaker
         )
 
+        request_start_time = datetime.now()
+        success = False
+        error = None
+        status_code = 0
+        
         try:
             # Execute request
             response = await client.execute_request(request_config)
+            status_code = response.status
+            success = 200 <= status_code < 300
 
             # Log response
             self.logger.log_status(response.status)
@@ -461,6 +620,47 @@ class Playbook:
             except json.JSONDecodeError:
                 body_str = await response.text()
             self.logger.log_body(body_str)
+        except Exception as e:
+            error = str(e)
+            if step.on_error != "ignore":
+                raise
         finally:
             # Ensure executor is closed
             await client.close()
+            
+            # Create request metrics
+            request_end_time = datetime.now()
+            duration_ms = (request_end_time - request_start_time).total_seconds() * 1000
+            request_metrics = RequestMetrics(
+                method=step.request.method.value,
+                endpoint=step.request.endpoint,
+                start_time=request_start_time,
+                end_time=request_end_time,
+                status_code=status_code,
+                duration_ms=duration_ms,
+                success=success,
+                error=error
+            )
+            
+            if self.metrics_collector:
+                self.metrics_collector.record_request(request_metrics)
+            
+            return request_metrics, 1, 1 if success else 0, 0 if success else 1
+
+    def _convert_to_executor_config(self, playbook_config: RequestConfig) -> RequestParams:
+        """Convert a playbook request config to an executor request config.
+        
+        Args:
+            playbook_config: The playbook's request configuration
+            
+        Returns:
+            RequestParams: The executor's request configuration
+        """
+        
+        return RequestParams(
+            url=playbook_config.endpoint,
+            method=playbook_config.method.value,
+            headers=playbook_config.headers,
+            data=playbook_config.data,
+            params=playbook_config.params
+        )
