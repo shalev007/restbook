@@ -244,6 +244,14 @@ class Playbook:
         successful_requests = 0
         failed_requests = 0
         phases_metrics = []
+        total_request_size_bytes = 0
+        total_response_size_bytes = 0
+        total_variable_size_bytes = 0
+        peak_memory_usage_bytes = 0
+        cpu_percentages: List[float] = []
+        
+        # Get initial memory usage
+        initial_memory = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
         
         try:
             # Check for checkpoint if incremental is enabled
@@ -295,6 +303,17 @@ class Playbook:
                             total_requests += req_count
                             successful_requests += success_count
                             failed_requests += fail_count
+                            
+                            # Update request and response sizes
+                            if step_metrics.request:
+                                if step_metrics.request.request_size_bytes:
+                                    total_request_size_bytes += step_metrics.request.request_size_bytes
+                                if step_metrics.request.response_size_bytes:
+                                    total_response_size_bytes += step_metrics.request.response_size_bytes
+                            
+                            # Update variable sizes
+                            for var_name, var_size in step_metrics.variable_sizes.items():
+                                total_variable_size_bytes += var_size
                     
                     # Save checkpoint after parallel phase
                     await self._save_checkpoint(phase_index, len(phase.steps) - 1)
@@ -313,6 +332,17 @@ class Playbook:
                         successful_requests += success_count
                         failed_requests += fail_count
                         
+                        # Update request and response sizes
+                        if step_metrics.request:
+                            if step_metrics.request.request_size_bytes:
+                                total_request_size_bytes += step_metrics.request.request_size_bytes
+                            if step_metrics.request.response_size_bytes:
+                                total_response_size_bytes += step_metrics.request.response_size_bytes
+                        
+                        # Update variable sizes
+                        for var_name, var_size in step_metrics.variable_sizes.items():
+                            total_variable_size_bytes += var_size
+                        
                         # Save checkpoint after each step
                         await self._save_checkpoint(phase_index, step_index)
                 
@@ -325,7 +355,9 @@ class Playbook:
                     end_time=phase_end_time,
                     duration_ms=phase_duration_ms,
                     steps=phase_steps_metrics,
-                    parallel=bool(phase.parallel)  # Convert to bool to satisfy type hint
+                    parallel=bool(phase.parallel),  # Convert to bool to satisfy type hint
+                    memory_usage_bytes=self.metrics_collector.get_memory_usage() - initial_memory if self.metrics_collector and initial_memory is not None else None,
+                    cpu_percent=max(0, self.metrics_collector.get_cpu_usage()) if self.metrics_collector else None
                 )
                 phases_metrics.append(phase_metrics)
                 
@@ -342,6 +374,14 @@ class Playbook:
             # Clean up temporary sessions
             self._temp_sessions.clear()
             
+            # Get final memory usage and calculate peak
+            final_memory = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
+            if initial_memory is not None and final_memory is not None:
+                peak_memory_usage_bytes = max(initial_memory, final_memory)
+            
+            # Calculate average CPU usage
+            average_cpu_percent = sum(cpu_percentages) / len(cpu_percentages) if cpu_percentages else None
+            
             # Record playbook metrics
             if self.metrics_collector:
                 playbook_end_time = datetime.now()
@@ -354,7 +394,12 @@ class Playbook:
                     total_requests=total_requests,
                     successful_requests=successful_requests,
                     failed_requests=failed_requests,
-                    total_duration_ms=playbook_duration_ms
+                    total_duration_ms=playbook_duration_ms,
+                    peak_memory_usage_bytes=peak_memory_usage_bytes,
+                    average_cpu_percent=average_cpu_percent,
+                    total_request_size_bytes=total_request_size_bytes,
+                    total_response_size_bytes=total_response_size_bytes,
+                    total_variable_size_bytes=total_variable_size_bytes
                 )
                 self.metrics_collector.record_playbook(playbook_metrics)
                 self.metrics_collector.finalize()
@@ -363,6 +408,10 @@ class Playbook:
         """Execute a single phase of the playbook."""
         phase_start_time = datetime.now()
         phase_steps_metrics = []
+        
+        # Get memory and CPU usage before phase
+        memory_before = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
+        cpu_before = self.metrics_collector.get_cpu_usage() if self.metrics_collector else None
         
         if phase.parallel:
             # Execute steps in parallel
@@ -386,6 +435,10 @@ class Playbook:
                 step_metrics, _, _, _ = result
                 phase_steps_metrics.append(step_metrics)
         
+        # Get memory and CPU usage after phase
+        memory_after = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
+        cpu_after = self.metrics_collector.get_cpu_usage() if self.metrics_collector else None
+        
         # Record phase metrics
         phase_end_time = datetime.now()
         phase_duration_ms = (phase_end_time - phase_start_time).total_seconds() * 1000
@@ -395,7 +448,9 @@ class Playbook:
             end_time=phase_end_time,
             duration_ms=phase_duration_ms,
             steps=phase_steps_metrics,
-            parallel=bool(phase.parallel)  # Convert to bool to satisfy type hint
+            parallel=bool(phase.parallel),  # Convert to bool to satisfy type hint
+            memory_usage_bytes=memory_after - memory_before if memory_before is not None and memory_after is not None else None,
+            cpu_percent=max(0, cpu_after - cpu_before) if cpu_before is not None and cpu_after is not None else None
         )
         
         if self.metrics_collector:
@@ -417,6 +472,10 @@ class Playbook:
         successful_requests = 0
         failed_requests = 0
         request_metrics_list: List[RequestMetrics] = []
+        
+        # Get memory and CPU usage before step
+        memory_before = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
+        cpu_before = self.metrics_collector.get_cpu_usage() if self.metrics_collector else None
         
         try:
             if step.iterate:
@@ -501,6 +560,19 @@ class Playbook:
             else:
                 raise
         
+        # Get memory and CPU usage after step
+        memory_after = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
+        cpu_after = self.metrics_collector.get_cpu_usage() if self.metrics_collector else None
+        
+        # Calculate variable sizes if metrics collector is enabled
+        variable_sizes = {}
+        if self.metrics_collector and step.store:
+            for store_config in step.store:
+                var_name = store_config.var
+                if self.variables.has(var_name):
+                    var_value = self.variables.get(var_name)
+                    variable_sizes[var_name] = self.metrics_collector.get_object_size(var_value)
+        
         # Create step metrics
         step_end_time = datetime.now()
         step_duration_ms = (step_end_time - step_start_time).total_seconds() * 1000
@@ -517,7 +589,10 @@ class Playbook:
                 error="No requests executed"
             ),
             retry_count=0,  # This would need to be tracked in the request execution
-            store_vars=[store.var for store in (step.store or [])]
+            store_vars=[store.var for store in (step.store or [])],
+            variable_sizes=variable_sizes,
+            memory_usage_bytes=memory_after - memory_before if memory_before is not None and memory_after is not None else None,
+            cpu_percent=max(0, cpu_after - cpu_before) if cpu_before is not None and cpu_after is not None else None
         )
         
         if self.metrics_collector:
@@ -596,6 +671,21 @@ class Playbook:
         success = False
         error = None
         status_code = 0
+        request_size_bytes = None
+        response_size_bytes = None
+        
+        # Calculate request size if data is present
+        if request_config.data:
+            if isinstance(request_config.data, (dict, list)):
+                request_size_bytes = len(json.dumps(request_config.data).encode('utf-8'))
+            elif isinstance(request_config.data, str):
+                request_size_bytes = len(request_config.data.encode('utf-8'))
+            elif isinstance(request_config.data, bytes):
+                request_size_bytes = len(request_config.data)
+        
+        # Get memory and CPU usage before request
+        memory_before = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
+        cpu_before = self.metrics_collector.get_cpu_usage() if self.metrics_collector else None
         
         try:
             # Execute request
@@ -609,6 +699,9 @@ class Playbook:
                 body = await response.json()
                 body_str = json.dumps(body, indent=2)
                 
+                # Calculate response size
+                response_size_bytes = len(body_str.encode('utf-8'))
+                
                 # Store response data if configured
                 if step.store:
                     try:
@@ -619,6 +712,7 @@ class Playbook:
                 
             except json.JSONDecodeError:
                 body_str = await response.text()
+                response_size_bytes = len(body_str.encode('utf-8'))
             self.logger.log_body(body_str)
         except Exception as e:
             error = str(e)
@@ -627,6 +721,10 @@ class Playbook:
         finally:
             # Ensure executor is closed
             await client.close()
+            
+            # Get memory and CPU usage after request
+            memory_after = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
+            cpu_after = self.metrics_collector.get_cpu_usage() if self.metrics_collector else None
             
             # Create request metrics
             request_end_time = datetime.now()
@@ -639,7 +737,11 @@ class Playbook:
                 status_code=status_code,
                 duration_ms=duration_ms,
                 success=success,
-                error=error
+                error=error,
+                request_size_bytes=request_size_bytes,
+                response_size_bytes=response_size_bytes,
+                memory_usage_bytes=memory_after - memory_before if memory_before is not None and memory_after is not None else None,
+                cpu_percent=max(0, cpu_after - cpu_before) if cpu_before is not None and cpu_after is not None else None
             )
             
             if self.metrics_collector:
