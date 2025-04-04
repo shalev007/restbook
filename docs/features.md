@@ -259,6 +259,14 @@ RestBook supports three types of metrics collectors:
 2. **Prometheus Collector**: Pushes metrics to a Prometheus Pushgateway for production monitoring
 3. **Console Collector**: Outputs metrics to the console in real-time for local development
 
+### Resource Metrics
+
+RestBook collects detailed resource usage metrics to help you optimize your playbooks:
+
+- **Memory Usage**: Track memory consumption at request, step, phase, and playbook levels
+- **CPU Utilization**: Monitor CPU usage as a percentage during execution
+- **Data Size Metrics**: Measure the size of request/response payloads and stored variables
+
 ### Configuration Example
 
 ```yaml

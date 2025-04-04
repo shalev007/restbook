@@ -108,4 +108,40 @@ phases:
           backoff_factor: 1.0
         timeout: 5
         validate_ssl: true
-        on_error: ignore  # Continue execution even if this step fails 
+        on_error: ignore  # Continue execution even if this step fails
+
+  - name: "Large Data Processing"
+    steps:
+      - session: json-placeholder
+        request:
+          method: GET
+          endpoint: "/posts"
+          params:
+            _limit: 100  # Request a large dataset to demonstrate memory usage
+        store:
+          - var: "all_posts"
+            jq: "."
+        # This step will demonstrate memory usage with a large dataset
+        retry:
+          max_retries: 1
+        timeout: 15
+        validate_ssl: true
+        on_error: abort
+
+  - name: "CPU Intensive Operation"
+    steps:
+      - session: json-placeholder
+        request:
+          method: GET
+          endpoint: "/posts"
+          params:
+            _limit: 50
+        store:
+          - var: "posts_for_processing"
+            jq: "."
+        # This step will demonstrate CPU usage with data processing
+        retry:
+          max_retries: 1
+        timeout: 10
+        validate_ssl: true
+        on_error: abort 

@@ -52,7 +52,7 @@ RestBook is a powerful API request orchestration tool that lets you define and e
 - **Parallel Execution**: Run requests in parallel for improved performance
 - **Incremental Execution**: Resume playbooks from checkpoints
 - **Resilient HTTP Client**: Automatic retries, circuit breaking, and rate limiting
-- **Metrics Collection**: Monitor and analyze playbook performance
+- **Metrics Collection**: Monitor and analyze playbook performance, including memory and CPU usage
 - **Extensible Architecture**: Add custom authentication and checkpoint stores
 
 ## Documentation Status
