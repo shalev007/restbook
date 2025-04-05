@@ -525,6 +525,10 @@ class MetricsManager:
             else None
         )
         
+        if variable_sizes:
+            for var in variable_sizes:
+                self._request_counts.total_variable_size += variable_sizes[var]
+        
         # Create metrics
         metrics = StepMetrics(
             session=context.session,

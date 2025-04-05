@@ -354,7 +354,7 @@ class Playbook:
         """
         # Start metrics collection for the step
         step_context_id = self.metrics_manager.start_step(step_index, step.session, phase_context_id) if self.metrics_manager and phase_context_id else None
-        
+        step_rendered_store = []
         try:
             if step.iterate:
                 # Parse iteration configuration
@@ -382,6 +382,7 @@ class Playbook:
                     rendered_step.request = self._render_request_config(step.request, context)
                     if step.store:
                         rendered_step.store = [self._render_store_config(store, context) for store in step.store]
+                        step_rendered_store.extend(rendered_step.store)
                     else:
                         rendered_step.store = None
                     
@@ -404,6 +405,7 @@ class Playbook:
                 rendered_step.request = self._render_request_config(step.request, context)
                 if step.store:
                     rendered_step.store = [self._render_store_config(store, context) for store in step.store]
+                    step_rendered_store.extend(rendered_step.store)
                 else:
                     rendered_step.store = None
                 # Execute step directly if no iteration is configured
@@ -419,8 +421,8 @@ class Playbook:
         
         # Calculate variable sizes if metrics manager is enabled
         variable_sizes = {}
-        if self.metrics_manager and step.store:
-            for store_config in step.store:
+        if self.metrics_manager and step_rendered_store:
+            for store_config in step_rendered_store:
                 var_name = store_config.var
                 if self.variables.has(var_name):
                     var_value = self.variables.get(var_name)
@@ -431,7 +433,7 @@ class Playbook:
             self.metrics_manager.end_step(
                 context_id=step_context_id,
                 retry_count=0,  # This would need to be tracked in the request execution
-                store_vars=[store.var for store in (step.store or [])],
+                store_vars=[store.var for store in (step_rendered_store or [])],
                 variable_sizes=variable_sizes
             )
 
