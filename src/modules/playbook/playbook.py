@@ -431,7 +431,6 @@ class Playbook:
         if self.metrics_manager and step_context_id:
             self.metrics_manager.end_step(
                 context_id=step_context_id,
-                request_metrics=None,
                 retry_count=0,  # This would need to be tracked in the request execution
                 store_vars=[store.var for store in (step.store or [])],
                 variable_sizes=variable_sizes

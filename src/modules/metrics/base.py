@@ -28,7 +28,6 @@ class RequestMetrics:
 class StepMetrics:
     """Metrics for a single step."""
     session: str
-    request: Optional[RequestMetrics] = None
     retry_count: int = 0
     store_vars: List[str] = field(default_factory=list)
     variable_sizes: Dict[str, int] = field(default_factory=dict)  # Size of stored variables in bytes
@@ -42,7 +41,6 @@ class PhaseMetrics:
     start_time: datetime
     end_time: datetime
     duration_ms: float
-    steps: List[StepMetrics] = field(default_factory=list)
     parallel: bool = False
     memory_usage_bytes: Optional[int] = None  # Memory usage during phase in bytes
     cpu_percent: Optional[float] = None  # CPU usage during phase as percentage
@@ -53,7 +51,6 @@ class PlaybookMetrics:
     start_time: datetime
     end_time: datetime
     duration_ms: float
-    phases: List[PhaseMetrics] = field(default_factory=list)
     total_requests: int = 0
     successful_requests: int = 0
     failed_requests: int = 0

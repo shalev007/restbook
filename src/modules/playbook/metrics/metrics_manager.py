@@ -66,8 +66,8 @@ class MetricsManager:
         # Track request counts per step
         self._step_request_counts: Dict[str, Dict[str, int]] = {}
         
-        # Track step metrics per phase before they're finalized
-        self._phase_steps: Dict[str, List[StepMetrics]] = {}
+        # Track step metrics
+        self._step_metrics: Dict[str, StepMetrics] = {}
         
         # Track step context IDs per phase
         self._phase_step_contexts: Dict[str, List[str]] = {}
@@ -149,13 +149,7 @@ class MetricsManager:
         Returns:
             StepMetrics: Metrics for the step, or None if not available
         """
-        # Check in the phases_metrics list for this step
-        for phase in self.phases_metrics:
-            for step in phase.steps:
-                if hasattr(step, 'context_id') and step.context_id == step_context_id:
-                    return step
-        
-        return None
+        return self._step_metrics.get(step_context_id)
     
     def get_phase_metrics(self, phase_context_id: str) -> Optional[PhaseMetrics]:
         """
@@ -167,11 +161,9 @@ class MetricsManager:
         Returns:
             PhaseMetrics: Metrics for the phase, or None if not available
         """
-        # Check if we have a phase with this context ID
         for phase in self.phases_metrics:
             if hasattr(phase, 'context_id') and phase.context_id == phase_context_id:
                 return phase
-        
         return None
     
     def get_phase_steps(self, phase_context_id: str) -> List[StepMetrics]:
@@ -184,25 +176,20 @@ class MetricsManager:
         Returns:
             List[StepMetrics]: List of step metrics for the phase
         """
-        # First try to get steps from the tracking map for active phases
-        if phase_context_id in self._phase_steps:
-            return self._phase_steps[phase_context_id]
-        
-        # If not found, check in completed phases
-        phase = self.get_phase_metrics(phase_context_id)
-        return phase.steps if phase else []
+        steps = []
+        for step_id in self._phase_step_contexts.get(phase_context_id, []):
+            if step_id in self._step_metrics:
+                steps.append(self._step_metrics[step_id])
+        return steps
     
     def get_all_step_metrics(self) -> List[StepMetrics]:
         """
-        Get all step metrics from all phases.
+        Get all step metrics.
         
         Returns:
             List[StepMetrics]: List of all step metrics
         """
-        steps = []
-        for phase in self.phases_metrics:
-            steps.extend(phase.steps)
-        return steps
+        return list(self._step_metrics.values())
     
     def start_phase(self, name: str) -> str:
         """
@@ -227,17 +214,13 @@ class MetricsManager:
         )
         
         self._active_contexts[context.id] = context
-        
-        # Initialize lists to track step contexts and metrics for this phase
         self._phase_step_contexts[context.id] = []
-        self._phase_steps[context.id] = []
         
         return context.id
     
     def end_phase(
         self, 
         context_id: str,
-        steps_metrics: Optional[List[StepMetrics]] = None,
         parallel: bool = False
     ) -> PhaseMetrics:
         """
@@ -245,14 +228,10 @@ class MetricsManager:
         
         Args:
             context_id: The context ID returned from start_phase
-            steps_metrics: Optional list of step metrics (deprecated, metrics are now tracked internally)
             parallel: Whether the phase steps were executed in parallel
             
         Returns:
             PhaseMetrics: Metrics for the phase
-            
-        Raises:
-            ValueError: If the context ID is not found or not a phase context
         """
         if context_id not in self._active_contexts:
             raise ValueError(f"No active context found with ID: {context_id}")
@@ -279,42 +258,20 @@ class MetricsManager:
             else None
         )
         
-        # Use internally tracked step metrics if not provided
-        if steps_metrics is None and context_id in self._phase_steps:
-            steps_metrics = self._phase_steps[context_id]
-        elif steps_metrics is None:
-            steps_metrics = []
-        
-        # Store context ID in extra data for reference
-        extra_data = {
-            "context_id": context_id
-        }
-        
         phase_metrics = PhaseMetrics(
             name=context.extra_data["name"],
             start_time=context.start_time,
             end_time=end_time,
             duration_ms=duration_ms,
-            steps=steps_metrics,
             parallel=parallel,
             memory_usage_bytes=memory_usage,
             cpu_percent=cpu_usage
         )
         
-        # Attach extra data as attributes to the metrics object for future reference
-        for key, value in extra_data.items():
-            setattr(phase_metrics, key, value)
-        
         self.phases_metrics.append(phase_metrics)
         
         if self.collector:
             self.collector.record_phase(phase_metrics)
-        
-        # Clean up step tracking for this phase
-        if context_id in self._phase_steps:
-            del self._phase_steps[context_id]
-        if context_id in self._phase_step_contexts:
-            del self._phase_step_contexts[context_id]
             
         return phase_metrics
     
@@ -361,7 +318,6 @@ class MetricsManager:
     def end_step(
         self,
         context_id: str,
-        request_metrics: Optional[RequestMetrics] = None,  # Now optional, can be determined internally
         retry_count: int = 0,
         store_vars: List[str] = [],
         variable_sizes: Dict[str, int] = {}
@@ -371,16 +327,12 @@ class MetricsManager:
         
         Args:
             context_id: The context ID returned from start_step
-            request_metrics: Optional metrics for the step's request (deprecated, provided for backward compatibility)
             retry_count: Number of retry attempts
             store_vars: Variables stored by the step
             variable_sizes: Sizes of variables stored by the step
             
         Returns:
             StepMetrics: Metrics for the step
-            
-        Raises:
-            ValueError: If the context ID is not found or not a step context
         """
         if context_id not in self._active_contexts:
             raise ValueError(f"No active context found with ID: {context_id}")
@@ -407,54 +359,8 @@ class MetricsManager:
             else None
         )
         
-        # If no explicit request_metrics provided, check if this step has any associated requests
-        if not request_metrics and 'request_context_ids' in context.extra_data and context.extra_data['request_context_ids']:
-            # Use the first request as the primary one for this step
-            # In the future, this could be expanded to handle multiple requests per step
-            request_id = context.extra_data['request_context_ids'][0]
-            if request_id in self._active_contexts:
-                # Request context still active, end it
-                request_metrics = self.end_request(
-                    context_id=request_id,
-                    status_code=0,
-                    success=False,
-                    error="Request not properly ended"
-                )
-        
-        if not request_metrics:
-            # Create a default RequestMetrics if none provided
-            request_metrics = RequestMetrics(
-                method="NONE",
-                endpoint="",
-                start_time=context.start_time,
-                end_time=end_time,
-                status_code=0,
-                duration_ms=duration_ms,
-                success=False,
-                error="No requests executed"
-            )
-        
-        # Get the request counts for this step
-        total_count, successful_count, failed_count = 0, 0, 0
-        if context_id in self._step_request_counts:
-            counts = self._step_request_counts[context_id]
-            total_count = counts["total"]
-            successful_count = counts["successful"]
-            failed_count = counts["failed"]
-        
-        # Store context ID and request counts in extra data for reference
-        # but don't pass them to StepMetrics constructor since it doesn't accept them
-        extra_data = {
-            "context_id": context_id,
-            "total_requests": total_count,
-            "successful_requests": successful_count,
-            "failed_requests": failed_count,
-            "phase_context_id": context.extra_data.get("phase_context_id")
-        }
-        
         step_metrics = StepMetrics(
             session=context.extra_data["session"],
-            request=request_metrics,
             retry_count=retry_count,
             store_vars=store_vars,
             variable_sizes=variable_sizes,
@@ -462,21 +368,15 @@ class MetricsManager:
             cpu_percent=cpu_usage
         )
         
-        # Attach extra data as attributes to the metrics object for future reference
-        for key, value in extra_data.items():
-            setattr(step_metrics, key, value)
+        self._step_metrics[context_id] = step_metrics
         
-        # Add step metrics to phase if linked
+        # Add step context ID to phase if linked
         phase_context_id = context.extra_data.get("phase_context_id")
-        if phase_context_id and phase_context_id in self._phase_steps:
-            self._phase_steps[phase_context_id].append(step_metrics)
+        if phase_context_id and phase_context_id in self._phase_step_contexts:
+            self._phase_step_contexts[phase_context_id].append(context_id)
         
         if self.collector:
             self.collector.record_step(step_metrics)
-            
-        # Clean up request counts for this step
-        if context_id in self._step_request_counts:
-            del self._step_request_counts[context_id]
             
         return step_metrics
     
@@ -634,7 +534,6 @@ class MetricsManager:
             start_time=self.playbook_start_time,
             end_time=playbook_end_time,
             duration_ms=playbook_duration_ms,
-            phases=self.phases_metrics,
             total_requests=self.total_requests,
             successful_requests=self.successful_requests,
             failed_requests=self.failed_requests,
