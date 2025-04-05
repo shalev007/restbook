@@ -1,8 +1,10 @@
 import asyncio
 import aiohttp
 import time
+import json
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
+from datetime import datetime
 
 from .aio_client_cache import AioSessionCache
 from .circuit_breaker import CircuitBreaker
@@ -26,6 +28,22 @@ class RequestParams(BaseModel):
     data: Optional[Dict[str, Any]] = None
     params: Optional[Dict[str, Any]] = None
     
+
+class RequestExecutionMetadata(BaseModel):
+    """Metadata about a request execution."""
+    method: str
+    url: str
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    retry_count: int = 0
+    status_code: Optional[int] = None
+    success: Optional[bool] = None
+    errors: List[str] = []  # Track all errors encountered
+    request_size_bytes: Optional[int] = None
+    response_size_bytes: Optional[int] = None
+    headers: Optional[Dict[str, str]] = None
+    params: Optional[Dict[str, Any]] = None
+    data: Optional[Dict[str, Any]] = None
 
 class ResilientHttpClient:
     """Handles HTTP request execution and response processing."""
@@ -61,7 +79,27 @@ class ResilientHttpClient:
         self.logger = logger
         self.circuit_breaker = circuit_breaker  # Allow it to be None
         self.session_cache = session_cache or AioSessionCache()
+        self._last_request_metadata: Optional[RequestExecutionMetadata] = None
+
+    def get_last_request_execution_metadata(self) -> Optional[RequestExecutionMetadata]:
+        """Get metadata about the last request execution.
         
+        Returns:
+            Optional[RequestExecutionMetadata]: Metadata about the last request execution, or None if no request has been executed
+        """
+        return self._last_request_metadata
+
+    def _handle_error(self, error_msg: str, success: bool = False) -> None:
+        """Helper method to handle error logging and metadata updates.
+        
+        Args:
+            error_msg: The error message to log and store
+            success: Whether the request was successful (defaults to False)
+        """
+        self.logger.log_error(error_msg)
+        if self._last_request_metadata is not None:
+            self._last_request_metadata.errors.append(error_msg)
+            self._last_request_metadata.success = success
 
     async def execute_request(
         self,
@@ -82,6 +120,25 @@ class ResilientHttpClient:
             UnknownError: If an unknown error occurs
             JSONError: If data is not valid JSON
         """
+        # Initialize metadata for this request
+        self._last_request_metadata = RequestExecutionMetadata(
+            method=request_params.method,
+            url=request_params.url,
+            start_time=datetime.now(),
+            headers=request_params.headers,
+            params=request_params.params,
+            data=request_params.data,
+            errors=[]  # Initialize empty errors list
+        )
+
+        # Calculate request size
+        if request_params.data:
+            if isinstance(request_params.data, (dict, list)):
+                self._last_request_metadata.request_size_bytes = len(json.dumps(request_params.data).encode('utf-8'))
+            elif isinstance(request_params.data, str):
+                self._last_request_metadata.request_size_bytes = len(request_params.data.encode('utf-8'))
+            elif isinstance(request_params.data, bytes):
+                self._last_request_metadata.request_size_bytes = len(request_params.data)
 
         # Get or create client session
         client = await self.session_cache.get_session(
@@ -94,7 +151,8 @@ class ResilientHttpClient:
                 try:
                     # Only check circuit breaker if it exists
                     if self.circuit_breaker and self.circuit_breaker.is_open():
-                        self.logger.log_error(f"Circuit breaker is open, waiting {self.circuit_breaker.get_reset_timeout()} seconds before next attempt...")
+                        error_msg = f"Circuit breaker is open, waiting {self.circuit_breaker.get_reset_timeout()} seconds before next attempt..."
+                        self._handle_error(error_msg)
                         await asyncio.sleep(self.circuit_breaker.get_reset_timeout())
                     
                     params = await self._build_request_params(request_params)
@@ -112,35 +170,60 @@ class ResilientHttpClient:
                     # Wait for the response body to be fully received
                     await response.read()
                     
+                    # Update metadata
+                    self._last_request_metadata.end_time = datetime.now()
+                    self._last_request_metadata.status_code = response.status
+                    self._last_request_metadata.retry_count = attempt
+                    
                     # Handle rate limiting
                     if response.status == self.RATE_LIMIT_STATUS:
-                        self.logger.log_error(f"Hit rate limit, waiting for reset...")
+                        error_msg = f"Hit rate limit, waiting for reset..."
+                        self._handle_error(error_msg)
                         raise RateLimitError(response)
                         
                     # Handle authentication errors
                     if response.status in self.AUTH_STATUS_CODES:
-                        self.logger.log_error(f"Authentication failed with status code {response.status}")
+                        error_msg = f"Authentication failed with status code {response.status}"
+                        self._handle_error(error_msg)
                         raise AuthenticationError("Authentication failed")
                     
                     # Check if we should retry other errors
                     if response.status in self.RETRY_STATUS_CODES:
-                        self.logger.log_error(f"Server returned a retryable status code {response.status}, retrying {attempt + 1} of {self.config.max_retries}...")
+                        error_msg = f"Server returned a retryable status code {response.status}, retrying {attempt + 1} of {self.config.max_retries}..."
+                        self._handle_error(error_msg)
                         raise RetryableError("Server returned a retryable status code")
                     
                     # Only record success if circuit breaker exists
                     if self.circuit_breaker:
                         self.circuit_breaker.record_success()
+                    
+                    # Update success status
+                    self._last_request_metadata.success = True
+                    
+                    # Calculate response size
+                    try:
+                        body = await response.json()
+                        body_str = json.dumps(body, indent=2)
+                        self._last_request_metadata.response_size_bytes = len(body_str.encode('utf-8'))
+                    except json.JSONDecodeError:
+                        body_str = await response.text()
+                        self._last_request_metadata.response_size_bytes = len(body_str.encode('utf-8'))
+                    
                     return response
                 except AuthenticationError:
                     if attempt < self.config.max_retries:
                         if await self._handle_auth_retry():
                             continue
-                        raise AuthenticationError("Authentication failed after retries")
+                        error_msg = "Authentication failed after retries"
+                        self._handle_error(error_msg)
+                        raise AuthenticationError(error_msg)
                 except RateLimitError as e:
                     if attempt < self.config.max_retries:
                         await self._handle_rate_limit(attempt, e.response)
                         continue
-                    raise RetryExceededError("Max retries exceeded")
+                    error_msg = "Max retries exceeded due to rate limiting"
+                    self._handle_error(error_msg)
+                    raise RetryExceededError(error_msg)
                 except RetryableError:
                     if attempt < self.config.max_retries:
                         # Only record failure if circuit breaker exists
@@ -148,35 +231,48 @@ class ResilientHttpClient:
                             self.circuit_breaker.record_failure()
                         await self._handle_retry_delay(attempt)
                         continue
-                    raise RetryExceededError("Max retries exceeded")
+                    error_msg = "Max retries exceeded"
+                    self._handle_error(error_msg)
+                    raise RetryExceededError(error_msg)
                 except aiohttp.ClientSSLError as err:
-                    self.logger.log_error(f"SSL error: {str(err)}, check your SSL configuration or try setting verify_ssl to False")
+                    error_msg = f"SSL error: {str(err)}, check your SSL configuration or try setting verify_ssl to False"
+                    self._handle_error(error_msg)
                     # SSL errors are usually configuration issues, don't retry
                     raise SSLVerificationError(f"SSL verification failed: {str(err)}")
                 except aiohttp.ClientConnectorError as err:
-                    self.logger.log_error(f"Connection error: {str(err)}")
+                    error_msg = f"Connection error: {str(err)}"
+                    self._handle_error(error_msg)
                     if attempt < self.config.max_retries:
                         # Only record failure if circuit breaker exists
                         if self.circuit_breaker:
                             self.circuit_breaker.record_failure()
                         await self._handle_retry_delay(attempt)
                         continue
-                    raise RetryExceededError(f"Connection failed after {self.config.max_retries} attempts: {str(err)}")
+                    error_msg = f"Connection failed after {self.config.max_retries} attempts: {str(err)}"
+                    self._handle_error(error_msg)
+                    raise RetryExceededError(error_msg)
                 except aiohttp.InvalidURL as err:
                     # URL errors are configuration issues, don't retry
-                    self.logger.log_error(f"Invalid URL: {str(err)}, check your URL configuration")
+                    error_msg = f"Invalid URL: {str(err)}, check your URL configuration"
+                    self._handle_error(error_msg)
                     raise UnknownError(f"Invalid URL configuration: {str(err)}")
                 except aiohttp.ClientError as err:
-                    self.logger.log_error(f"Client error: {str(err)}")
+                    error_msg = f"Client error: {str(err)}"
+                    self._handle_error(error_msg)
                     if attempt < self.config.max_retries:
                         await self._handle_retry_delay(attempt)
                         continue
-                    raise RetryExceededError(f"Request failed after {self.config.max_retries} attempts: {str(err)}")
+                    error_msg = f"Request failed after {self.config.max_retries} attempts: {str(err)}"
+                    self._handle_error(error_msg)
+                    raise RetryExceededError(error_msg)
                 except Exception as err:
-                    self.logger.log_error(f"Unexpected error: {str(err)}")
+                    error_msg = f"Unexpected error: {str(err)}"
+                    self._handle_error(error_msg)
                     raise UnknownError(f"Unexpected error: {str(err)}")
 
-            raise UnknownError("Request failed in an unexpected way - reached end of retry loop without success or specific error")
+            error_msg = "Request failed in an unexpected way - reached end of retry loop without success or specific error"
+            self._handle_error(error_msg)
+            raise UnknownError(error_msg)
         finally:
             # Always close the session after execution
             await self.session_cache.close()

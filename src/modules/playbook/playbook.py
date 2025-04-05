@@ -511,35 +511,15 @@ class Playbook:
                 step_context_id=step_context_id
             )
         
-        success = False
-        error = None
-        status_code = 0
-        request_size_bytes = None
-        response_size_bytes = None
-        
-        # Calculate request size if data is present
-        if request_config.data:
-            if isinstance(request_config.data, (dict, list)):
-                request_size_bytes = len(json.dumps(request_config.data).encode('utf-8'))
-            elif isinstance(request_config.data, str):
-                request_size_bytes = len(request_config.data.encode('utf-8'))
-            elif isinstance(request_config.data, bytes):
-                request_size_bytes = len(request_config.data)
-        
         try:
             # Execute request
             response = await client.execute_request(request_config)
-            status_code = response.status
-            success = 200 <= status_code < 300
 
             # Log response
             self.logger.log_status(response.status)
             try:
                 body = await response.json()
                 body_str = json.dumps(body, indent=2)
-                
-                # Calculate response size
-                response_size_bytes = len(body_str.encode('utf-8'))
                 
                 # Store response data if configured
                 if step.store:
@@ -551,26 +531,27 @@ class Playbook:
                 
             except json.JSONDecodeError:
                 body_str = await response.text()
-                response_size_bytes = len(body_str.encode('utf-8'))
             self.logger.log_body(body_str)
+
         except Exception as e:
-            error = str(e)
             if step.on_error != "ignore":
                 raise
         finally:
             # Ensure executor is closed
             await client.close()
             
-            # End metrics collection for the request
+            # Get request metadata and end metrics collection
             if self.metrics_manager and request_context_id:
-                self.metrics_manager.end_request(
-                    context_id=request_context_id,
-                    status_code=status_code,
-                    success=success,
-                    error=error,
-                    request_size_bytes=request_size_bytes,
-                    response_size_bytes=response_size_bytes
-                )
+                metadata = client.get_last_request_execution_metadata()
+                if metadata:
+                    self.metrics_manager.end_request(
+                        context_id=request_context_id,
+                        status_code=metadata.status_code or 0,
+                        success=metadata.success or False,
+                        error=metadata.errors[-1] if metadata.errors else None,
+                        request_size_bytes=metadata.request_size_bytes,
+                        response_size_bytes=metadata.response_size_bytes
+                    )
 
     def _convert_to_executor_config(self, playbook_config: RequestConfig) -> RequestParams:
         """Convert a playbook request config to an executor request config.
