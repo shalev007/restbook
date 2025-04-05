@@ -336,13 +336,11 @@ class Playbook:
             # Clean up temporary sessions
             self._temp_sessions.clear()
             
-            # Clean up any active metrics contexts
-            if self.metrics_manager:
-                self.metrics_manager.cleanup()
             
             # Finalize playbook metrics
             if self.metrics_manager:
                 self.metrics_manager.finalize_playbook()
+                self.metrics_manager.cleanup()
 
     async def _execute_step(self, step: StepConfig, session_store: SessionStore, phase_context_id: Optional[str] = None) -> None:
         """

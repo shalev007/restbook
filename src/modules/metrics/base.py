@@ -23,6 +23,8 @@ class RequestMetrics:
     response_size_bytes: Optional[int] = None  # Size of response payload in bytes
     memory_usage_bytes: Optional[int] = None  # Memory usage during request in bytes
     cpu_percent: Optional[float] = None  # CPU usage during request as percentage
+    step: Optional[int] = None
+    phase: Optional[str] = None
 
 @dataclass
 class StepMetrics:
@@ -33,6 +35,7 @@ class StepMetrics:
     variable_sizes: Dict[str, int] = field(default_factory=dict)  # Size of stored variables in bytes
     memory_usage_bytes: Optional[int] = None  # Memory usage during step in bytes
     cpu_percent: Optional[float] = None  # CPU usage during step as percentage
+    phase: Optional[str] = None
 
 @dataclass
 class PhaseMetrics:

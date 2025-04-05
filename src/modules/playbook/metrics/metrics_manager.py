@@ -1,6 +1,7 @@
 """Metrics management for playbooks."""
 from datetime import datetime
 from typing import Dict, List, Optional, Any, Union, Tuple, Set
+from dataclasses import dataclass, field
 import uuid
 
 from ...metrics import (
@@ -11,31 +12,124 @@ from ...metrics import (
     PlaybookMetrics
 )
 
-class MetricsContext:
-    """Holds context data for an active metrics collection."""
+@dataclass
+class RequestCounters:
+    """Tracks request-related counts."""
+    total: int = 0
+    successful: int = 0
+    failed: int = 0
+    total_request_size: int = 0
+    total_response_size: int = 0
+    total_variable_size: int = 0
+
+@dataclass
+class ResourceUsageTracker:
+    """Tracks resource usage metrics."""
+    peak_memory: int = 0
+    cpu_measurements: List[float] = field(default_factory=list)
     
-    def __init__(self, 
-                 context_type: str, 
-                 start_time: datetime,
-                 memory_before: Optional[int] = None,
-                 cpu_before: Optional[float] = None,
-                 **extra_data: Any):
-        """
-        Initialize a metrics context.
+    def update_memory(self, current: Optional[int]) -> None:
+        """Update peak memory usage."""
+        if current is not None:
+            self.peak_memory = max(self.peak_memory, current)
+            
+    def add_cpu_measurement(self, cpu: Optional[float]) -> None:
+        """Add a CPU measurement."""
+        if cpu is not None:
+            self.cpu_measurements.append(cpu)
+            
+    def get_average_cpu(self) -> Optional[float]:
+        """Calculate average CPU usage."""
+        return (sum(self.cpu_measurements) / len(self.cpu_measurements)
+                if self.cpu_measurements else None)
+
+@dataclass
+class PlaybookContext:
+    """Tracks playbook-level context."""
+    start_time: datetime
+    initial_memory: Optional[int] = None
+
+@dataclass
+class PhaseContext:
+    """Tracks phase-level context."""
+    id: str
+    name: str
+    start_time: datetime
+    step_ids: Set[str] = field(default_factory=set)
+    initial_memory: Optional[int] = None
+    initial_cpu: Optional[float] = None
+
+@dataclass
+class StepContext:
+    """Tracks step-level context."""
+    id: str
+    session: str
+    start_time: datetime
+    phase_id: Optional[str] = None
+    request_ids: Set[str] = field(default_factory=set)
+    initial_memory: Optional[int] = None
+    initial_cpu: Optional[float] = None
+
+@dataclass
+class RequestContext:
+    """Tracks request-level context."""
+    id: str
+    method: str
+    endpoint: str
+    start_time: datetime
+    step_id: Optional[str] = None
+    initial_memory: Optional[int] = None
+    initial_cpu: Optional[float] = None
+
+    def end(self, 
+            end_time: datetime,
+            status_code: int,
+            success: bool,
+            error: Optional[str] = None,
+            errors: Optional[List[str]] = None,
+            request_size_bytes: Optional[int] = None,
+            response_size_bytes: Optional[int] = None,
+            memory_after: Optional[int] = None,
+            cpu_after: Optional[float] = None) -> RequestMetrics:
+        """Create RequestMetrics from this context."""
+        duration_ms = (end_time - self.start_time).total_seconds() * 1000
         
-        Args:
-            context_type: Type of context (phase, step, request)
-            start_time: Start time of the operation
-            memory_before: Memory usage at start
-            cpu_before: CPU usage at start
-            extra_data: Any additional data needed for this context
-        """
-        self.id = str(uuid.uuid4())
-        self.type = context_type
-        self.start_time = start_time
-        self.memory_before = memory_before
-        self.cpu_before = cpu_before
-        self.extra_data = extra_data
+        memory_usage = (
+            memory_after - self.initial_memory 
+            if self.initial_memory is not None and memory_after is not None 
+            else None
+        )
+        
+        cpu_usage = (
+            max(0, cpu_after - self.initial_cpu) 
+            if self.initial_cpu is not None and cpu_after is not None 
+            else None
+        )
+        
+        # Convert step_id to step number if available
+        step_number = None
+        if self.step_id:
+            try:
+                step_number = int(self.step_id.split('-')[-1])
+            except (ValueError, IndexError):
+                pass
+        
+        return RequestMetrics(
+            method=self.method,
+            endpoint=self.endpoint,
+            start_time=self.start_time,
+            end_time=end_time,
+            status_code=status_code,
+            duration_ms=duration_ms,
+            success=success,
+            error=error,
+            errors=errors or [],
+            request_size_bytes=request_size_bytes,
+            response_size_bytes=response_size_bytes,
+            memory_usage_bytes=memory_usage,
+            cpu_percent=cpu_usage,
+            step=step_number
+        )
 
 class MetricsManager:
     """Manages metrics collection for playbooks."""
@@ -48,35 +142,32 @@ class MetricsManager:
             metrics_collector: Optional metrics collector instance
         """
         self.collector = metrics_collector
-        self.playbook_start_time: Optional[datetime] = None
-        self.initial_memory: Optional[int] = None
-        self.total_requests: int = 0
-        self.successful_requests: int = 0
-        self.failed_requests: int = 0
-        self.phases_metrics: List[PhaseMetrics] = []
-        self.total_request_size_bytes: int = 0
-        self.total_response_size_bytes: int = 0
-        self.total_variable_size_bytes: int = 0
-        self.peak_memory_usage_bytes: int = 0
-        self.cpu_percentages: List[float] = []
         
-        # Track active contexts by their ID
-        self._active_contexts: Dict[str, MetricsContext] = {}
+        # Active execution contexts
+        self._active_playbook: Optional[PlaybookContext] = None
+        self._active_phases: Dict[str, PhaseContext] = {}
+        self._active_steps: Dict[str, StepContext] = {}
+        self._active_requests: Dict[str, RequestContext] = {}
         
-        # Track request counts per step
-        self._step_request_counts: Dict[str, Dict[str, int]] = {}
+        # Metrics storage with ID tracking
+        self._completed_requests: List[RequestMetrics] = []
+        self._request_ids: Dict[str, RequestMetrics] = {}  # Track request IDs
+        self._completed_steps: Dict[str, StepMetrics] = {}
+        self._completed_phases: List[PhaseMetrics] = []
+        self._phase_ids: Dict[str, PhaseMetrics] = {}  # Track phase IDs
         
-        # Track step metrics
-        self._step_metrics: Dict[str, StepMetrics] = {}
-        
-        # Track step context IDs per phase
-        self._phase_step_contexts: Dict[str, List[str]] = {}
+        # Counters and trackers
+        self._request_counts = RequestCounters()
+        self._resource_usage = ResourceUsageTracker()
     
     def start_playbook(self) -> None:
         """Start timing and metrics collection for the playbook."""
-        self.playbook_start_time = datetime.now()
-        if self.collector:
-            self.initial_memory = self.collector.get_memory_usage()
+        start_time = datetime.now()
+        initial_memory = self.get_memory_usage()
+        self._active_playbook = PlaybookContext(
+            start_time=start_time,
+            initial_memory=initial_memory
+        )
     
     def get_memory_usage(self) -> Optional[int]:
         """Get current memory usage in bytes."""
@@ -98,27 +189,16 @@ class MetricsManager:
             step_context_id: The context ID of the step
             success: Whether the request was successful
         """
-        # Increment global counts
-        self.total_requests += 1
+        self._request_counts.total += 1
         if success:
-            self.successful_requests += 1
+            self._request_counts.successful += 1
         else:
-            self.failed_requests += 1
-            
-        # Increment step-specific counts if we have a step context
-        if step_context_id:
-            if step_context_id not in self._step_request_counts:
-                self._step_request_counts[step_context_id] = {
-                    "total": 0,
-                    "successful": 0,
-                    "failed": 0
-                }
-            
-            self._step_request_counts[step_context_id]["total"] += 1
-            if success:
-                self._step_request_counts[step_context_id]["successful"] += 1
-            else:
-                self._step_request_counts[step_context_id]["failed"] += 1
+            self._request_counts.failed += 1
+    
+    def _get_request_success(self, request_id: str) -> bool:
+        """Check if a request was successful."""
+        request = self._request_ids.get(request_id)
+        return request.success if request else False
     
     def get_request_counts(self, step_context_id: str) -> tuple[int, int, int]:
         """
@@ -133,11 +213,14 @@ class MetricsManager:
             - int: Number of successful requests
             - int: Number of failed requests
         """
-        if step_context_id not in self._step_request_counts:
+        step = self._active_steps.get(step_context_id)
+        if not step:
             return 0, 0, 0
             
-        counts = self._step_request_counts[step_context_id]
-        return counts["total"], counts["successful"], counts["failed"]
+        total = len(step.request_ids)
+        successful = sum(1 for req_id in step.request_ids 
+                        if self._get_request_success(req_id))
+        return total, successful, total - successful
     
     def get_step_metrics(self, step_context_id: str) -> Optional[StepMetrics]:
         """
@@ -149,7 +232,7 @@ class MetricsManager:
         Returns:
             StepMetrics: Metrics for the step, or None if not available
         """
-        return self._step_metrics.get(step_context_id)
+        return self._completed_steps.get(step_context_id)
     
     def get_phase_metrics(self, phase_context_id: str) -> Optional[PhaseMetrics]:
         """
@@ -161,10 +244,7 @@ class MetricsManager:
         Returns:
             PhaseMetrics: Metrics for the phase, or None if not available
         """
-        for phase in self.phases_metrics:
-            if hasattr(phase, 'context_id') and phase.context_id == phase_context_id:
-                return phase
-        return None
+        return self._phase_ids.get(phase_context_id)
     
     def get_phase_steps(self, phase_context_id: str) -> List[StepMetrics]:
         """
@@ -176,11 +256,15 @@ class MetricsManager:
         Returns:
             List[StepMetrics]: List of step metrics for the phase
         """
-        steps = []
-        for step_id in self._phase_step_contexts.get(phase_context_id, []):
-            if step_id in self._step_metrics:
-                steps.append(self._step_metrics[step_id])
-        return steps
+        phase = self._active_phases.get(phase_context_id)
+        if not phase:
+            return []
+            
+        return [
+            self._completed_steps[step_id]
+            for step_id in phase.step_ids
+            if step_id in self._completed_steps
+        ]
     
     def get_all_step_metrics(self) -> List[StepMetrics]:
         """
@@ -189,7 +273,7 @@ class MetricsManager:
         Returns:
             List[StepMetrics]: List of all step metrics
         """
-        return list(self._step_metrics.values())
+        return list(self._completed_steps.values())
     
     def start_phase(self, name: str) -> str:
         """
@@ -201,79 +285,16 @@ class MetricsManager:
         Returns:
             str: Context ID for the phase
         """
-        start_time = datetime.now()
-        memory_before = self.get_memory_usage()
-        cpu_before = self.get_cpu_usage()
-        
-        context = MetricsContext(
-            context_type="phase",
-            start_time=start_time,
-            memory_before=memory_before,
-            cpu_before=cpu_before,
-            name=name
+        phase_id = str(uuid.uuid4())
+        context = PhaseContext(
+            id=phase_id,
+            name=name,
+            start_time=datetime.now(),
+            initial_memory=self.get_memory_usage(),
+            initial_cpu=self.get_cpu_usage()
         )
-        
-        self._active_contexts[context.id] = context
-        self._phase_step_contexts[context.id] = []
-        
-        return context.id
-    
-    def end_phase(
-        self, 
-        context_id: str,
-        parallel: bool = False
-    ) -> PhaseMetrics:
-        """
-        End timing and metrics collection for a phase.
-        
-        Args:
-            context_id: The context ID returned from start_phase
-            parallel: Whether the phase steps were executed in parallel
-            
-        Returns:
-            PhaseMetrics: Metrics for the phase
-        """
-        if context_id not in self._active_contexts:
-            raise ValueError(f"No active context found with ID: {context_id}")
-        
-        context = self._active_contexts.pop(context_id)
-        if context.type != "phase":
-            raise ValueError(f"Context {context_id} is not a phase context")
-        
-        end_time = datetime.now()
-        duration_ms = (end_time - context.start_time).total_seconds() * 1000
-        
-        memory_after = self.get_memory_usage()
-        cpu_after = self.get_cpu_usage()
-        
-        memory_usage = (
-            memory_after - context.memory_before 
-            if context.memory_before is not None and memory_after is not None 
-            else None
-        )
-        
-        cpu_usage = (
-            max(0, cpu_after - context.cpu_before) 
-            if context.cpu_before is not None and cpu_after is not None 
-            else None
-        )
-        
-        phase_metrics = PhaseMetrics(
-            name=context.extra_data["name"],
-            start_time=context.start_time,
-            end_time=end_time,
-            duration_ms=duration_ms,
-            parallel=parallel,
-            memory_usage_bytes=memory_usage,
-            cpu_percent=cpu_usage
-        )
-        
-        self.phases_metrics.append(phase_metrics)
-        
-        if self.collector:
-            self.collector.record_phase(phase_metrics)
-            
-        return phase_metrics
+        self._active_phases[phase_id] = context
+        return phase_id
     
     def start_step(self, session: str, phase_context_id: Optional[str] = None) -> str:
         """
@@ -286,99 +307,21 @@ class MetricsManager:
         Returns:
             str: Context ID for the step
         """
-        start_time = datetime.now()
-        memory_before = self.get_memory_usage()
-        cpu_before = self.get_cpu_usage()
-        
-        context = MetricsContext(
-            context_type="step",
-            start_time=start_time,
-            memory_before=memory_before,
-            cpu_before=cpu_before,
+        step_id = str(uuid.uuid4())
+        context = StepContext(
+            id=step_id,
             session=session,
-            request_context_ids=[],  # Track request contexts that belong to this step
-            phase_context_id=phase_context_id  # Link to parent phase
+            phase_id=phase_context_id,
+            start_time=datetime.now(),
+            initial_memory=self.get_memory_usage(),
+            initial_cpu=self.get_cpu_usage()
         )
+        self._active_steps[step_id] = context
         
-        self._active_contexts[context.id] = context
-        
-        # Initialize request counts for this step
-        self._step_request_counts[context.id] = {
-            "total": 0,
-            "successful": 0,
-            "failed": 0
-        }
-        
-        # Add step context to phase if provided
-        if phase_context_id and phase_context_id in self._phase_step_contexts:
-            self._phase_step_contexts[phase_context_id].append(context.id)
-        
-        return context.id
-    
-    def end_step(
-        self,
-        context_id: str,
-        retry_count: int = 0,
-        store_vars: List[str] = [],
-        variable_sizes: Dict[str, int] = {}
-    ) -> StepMetrics:
-        """
-        End timing and metrics collection for a step.
-        
-        Args:
-            context_id: The context ID returned from start_step
-            retry_count: Number of retry attempts
-            store_vars: Variables stored by the step
-            variable_sizes: Sizes of variables stored by the step
+        if phase_context_id and phase_context_id in self._active_phases:
+            self._active_phases[phase_context_id].step_ids.add(step_id)
             
-        Returns:
-            StepMetrics: Metrics for the step
-        """
-        if context_id not in self._active_contexts:
-            raise ValueError(f"No active context found with ID: {context_id}")
-        
-        context = self._active_contexts.pop(context_id)
-        if context.type != "step":
-            raise ValueError(f"Context {context_id} is not a step context")
-        
-        end_time = datetime.now()
-        duration_ms = (end_time - context.start_time).total_seconds() * 1000
-        
-        memory_after = self.get_memory_usage()
-        cpu_after = self.get_cpu_usage()
-        
-        memory_usage = (
-            memory_after - context.memory_before 
-            if context.memory_before is not None and memory_after is not None 
-            else None
-        )
-        
-        cpu_usage = (
-            max(0, cpu_after - context.cpu_before) 
-            if context.cpu_before is not None and cpu_after is not None 
-            else None
-        )
-        
-        step_metrics = StepMetrics(
-            session=context.extra_data["session"],
-            retry_count=retry_count,
-            store_vars=store_vars,
-            variable_sizes=variable_sizes,
-            memory_usage_bytes=memory_usage,
-            cpu_percent=cpu_usage
-        )
-        
-        self._step_metrics[context_id] = step_metrics
-        
-        # Add step context ID to phase if linked
-        phase_context_id = context.extra_data.get("phase_context_id")
-        if phase_context_id and phase_context_id in self._phase_step_contexts:
-            self._phase_step_contexts[phase_context_id].append(context_id)
-        
-        if self.collector:
-            self.collector.record_step(step_metrics)
-            
-        return step_metrics
+        return step_id
     
     def start_request(self, method: str, endpoint: str, step_context_id: Optional[str] = None) -> str:
         """
@@ -392,28 +335,22 @@ class MetricsManager:
         Returns:
             str: Context ID for the request
         """
-        start_time = datetime.now()
-        memory_before = self.get_memory_usage()
-        cpu_before = self.get_cpu_usage()
-        
-        context = MetricsContext(
-            context_type="request",
-            start_time=start_time,
-            memory_before=memory_before,
-            cpu_before=cpu_before,
+        request_id = str(uuid.uuid4())
+        context = RequestContext(
+            id=request_id,
+            step_id=step_context_id,
             method=method,
             endpoint=endpoint,
-            step_context_id=step_context_id  # Link to parent step
+            start_time=datetime.now(),
+            initial_memory=self.get_memory_usage(),
+            initial_cpu=self.get_cpu_usage()
         )
+        self._active_requests[request_id] = context
         
-        # Add request context ID to the parent step if provided
-        if step_context_id and step_context_id in self._active_contexts:
-            step_context = self._active_contexts[step_context_id]
-            if 'request_context_ids' in step_context.extra_data:
-                step_context.extra_data['request_context_ids'].append(context.id)
-        
-        self._active_contexts[context.id] = context
-        return context.id
+        if step_context_id and step_context_id in self._active_steps:
+            self._active_steps[step_context_id].request_ids.add(request_id)
+            
+        return request_id
     
     def end_request(
         self,
@@ -421,7 +358,7 @@ class MetricsManager:
         status_code: int,
         success: bool,
         error: Optional[str] = None,
-        errors: List[str] = [],
+        errors: Optional[List[str]] = None,
         request_size_bytes: Optional[int] = None,
         response_size_bytes: Optional[int] = None
     ) -> RequestMetrics:
@@ -440,66 +377,51 @@ class MetricsManager:
             RequestMetrics: Metrics for the request
             
         Raises:
-            ValueError: If the context ID is not found or not a request context
+            ValueError: If the context ID is not found
         """
-        if context_id not in self._active_contexts:
-            raise ValueError(f"No active context found with ID: {context_id}")
+        if context_id not in self._active_requests:
+            raise ValueError(f"No active request found with ID: {context_id}")
         
-        context = self._active_contexts.pop(context_id)
-        if context.type != "request":
-            raise ValueError(f"Context {context_id} is not a request context")
-        
+        context = self._active_requests.pop(context_id)
         end_time = datetime.now()
-        duration_ms = (end_time - context.start_time).total_seconds() * 1000
-        
         memory_after = self.get_memory_usage()
         cpu_after = self.get_cpu_usage()
         
-        memory_usage = (
-            memory_after - context.memory_before 
-            if context.memory_before is not None and memory_after is not None 
-            else None
-        )
-        
-        cpu_usage = (
-            max(0, cpu_after - context.cpu_before) 
-            if context.cpu_before is not None and cpu_after is not None 
-            else None
-        )
-        
-        if cpu_usage is not None:
-            self.cpu_percentages.append(cpu_usage)
-        
-        # Update request and response size totals
-        if request_size_bytes is not None:
-            self.total_request_size_bytes += request_size_bytes
-        if response_size_bytes is not None:
-            self.total_response_size_bytes += response_size_bytes
-        
-        # Increment request counts for both global and step contexts
-        step_context_id = context.extra_data.get("step_context_id")
-        self.increment_request_count(step_context_id, success)
-        
-        request_metrics = RequestMetrics(
-            method=context.extra_data["method"],
-            endpoint=context.extra_data["endpoint"],
-            start_time=context.start_time,
+        # Create metrics
+        metrics = context.end(
             end_time=end_time,
             status_code=status_code,
-            duration_ms=duration_ms,
             success=success,
             error=error,
             errors=errors,
             request_size_bytes=request_size_bytes,
             response_size_bytes=response_size_bytes,
-            memory_usage_bytes=memory_usage,
-            cpu_percent=cpu_usage
+            memory_after=memory_after,
+            cpu_after=cpu_after
         )
         
+        # Update resource usage
+        if metrics.memory_usage_bytes is not None:
+            self._resource_usage.update_memory(metrics.memory_usage_bytes)
+        if metrics.cpu_percent is not None:
+            self._resource_usage.add_cpu_measurement(metrics.cpu_percent)
+        
+        # Update request counts
+        if request_size_bytes is not None:
+            self._request_counts.total_request_size += request_size_bytes
+        if response_size_bytes is not None:
+            self._request_counts.total_response_size += response_size_bytes
+        
+        # Increment request counts
+        self.increment_request_count(context.step_id, success)
+        
+        # Store and return
+        self._completed_requests.append(metrics)
+        self._request_ids[context_id] = metrics
         if self.collector:
-            self.collector.record_request(request_metrics)
+            self.collector.record_request(metrics)
             
-        return request_metrics
+        return metrics
     
     def update_variable_size(self, var_name: str, var_value: Any) -> None:
         """Update the total variable size with a new variable."""
@@ -507,42 +429,38 @@ class MetricsManager:
             return
             
         size = self.collector.get_object_size(var_value)
-        self.total_variable_size_bytes += size
+        self._request_counts.total_variable_size += size
     
     def finalize_playbook(self) -> None:
         """Finalize playbook metrics collection."""
-        if not self.collector or self.playbook_start_time is None:
+        if not self.collector or self._active_playbook is None:
             return
             
         # Get final memory usage and calculate peak
         final_memory = self.get_memory_usage()
-        if self.initial_memory is not None and final_memory is not None:
-            self.peak_memory_usage_bytes = max(self.initial_memory, final_memory)
+        if self._active_playbook.initial_memory is not None and final_memory is not None:
+            self._resource_usage.peak_memory = max(self._active_playbook.initial_memory, final_memory)
         
         # Calculate average CPU usage
-        average_cpu_percent = (
-            sum(self.cpu_percentages) / len(self.cpu_percentages) 
-            if self.cpu_percentages 
-            else None
-        )
+        average_cpu_percent = self._resource_usage.get_average_cpu()
         
         # Record playbook metrics
         playbook_end_time = datetime.now()
-        playbook_duration_ms = (playbook_end_time - self.playbook_start_time).total_seconds() * 1000
+        playbook_duration_ms = (playbook_end_time - self._active_playbook.start_time).total_seconds() * 1000
         
         playbook_metrics = PlaybookMetrics(
-            start_time=self.playbook_start_time,
+            start_time=self._active_playbook.start_time,
             end_time=playbook_end_time,
             duration_ms=playbook_duration_ms,
-            total_requests=self.total_requests,
-            successful_requests=self.successful_requests,
-            failed_requests=self.failed_requests,
+            total_requests=self._request_counts.total,
+            successful_requests=self._request_counts.successful,
+            failed_requests=self._request_counts.failed,
             total_duration_ms=playbook_duration_ms,
-            peak_memory_usage_bytes=self.peak_memory_usage_bytes,
+            peak_memory_usage_bytes=self._resource_usage.peak_memory,
             average_cpu_percent=average_cpu_percent,
-            total_request_size_bytes=self.total_request_size_bytes,
-            total_response_size_bytes=self.total_response_size_bytes,
-            total_variable_size_bytes=self.total_variable_size_bytes
+            total_request_size_bytes=self._request_counts.total_request_size,
+            total_response_size_bytes=self._request_counts.total_response_size,
+            total_variable_size_bytes=self._request_counts.total_variable_size
         )
         
         self.collector.record_playbook(playbook_metrics)
@@ -550,5 +468,129 @@ class MetricsManager:
         
     def cleanup(self) -> None:
         """Clean up any active contexts (e.g., in case of errors)."""
-        self._active_contexts.clear() 
-        self._step_request_counts.clear() 
+        self._active_requests.clear() 
+        self._active_steps.clear() 
+        self._active_phases.clear() 
+        self._active_playbook = None
+    
+    def end_step(
+        self,
+        context_id: str,
+        retry_count: int = 0,
+        store_vars: Optional[List[str]] = None,
+        variable_sizes: Optional[Dict[str, int]] = None
+    ) -> StepMetrics:
+        """
+        End timing and metrics collection for a step.
+        
+        Args:
+            context_id: The context ID returned from start_step
+            retry_count: Number of retries for this step
+            store_vars: List of variables stored during this step
+            variable_sizes: Sizes of stored variables in bytes
+            
+        Returns:
+            StepMetrics: Metrics for the step
+            
+        Raises:
+            ValueError: If the context ID is not found
+        """
+        if context_id not in self._active_steps:
+            raise ValueError(f"No active step found with ID: {context_id}")
+        
+        context = self._active_steps.pop(context_id)
+        end_time = datetime.now()
+        memory_after = self.get_memory_usage()
+        cpu_after = self.get_cpu_usage()
+        
+        # Calculate memory and CPU usage
+        memory_usage = (
+            memory_after - context.initial_memory 
+            if context.initial_memory is not None and memory_after is not None 
+            else None
+        )
+        
+        cpu_usage = (
+            max(0, cpu_after - context.initial_cpu) 
+            if context.initial_cpu is not None and cpu_after is not None 
+            else None
+        )
+        
+        # Create metrics
+        metrics = StepMetrics(
+            session=context.session,
+            retry_count=retry_count,
+            store_vars=store_vars or [],
+            variable_sizes=variable_sizes or {},
+            memory_usage_bytes=memory_usage,
+            cpu_percent=cpu_usage,
+            phase=context.phase_id
+        )
+        
+        # Store and return
+        self._completed_steps[context_id] = metrics
+        if self.collector:
+            self.collector.record_step(metrics)
+            
+        return metrics
+    
+    def end_phase(
+        self,
+        context_id: str,
+        parallel: bool = False
+    ) -> PhaseMetrics:
+        """
+        End timing and metrics collection for a phase.
+        
+        Args:
+            context_id: The context ID returned from start_phase
+            parallel: Whether the phase was executed in parallel
+            
+        Returns:
+            PhaseMetrics: Metrics for the phase
+            
+        Raises:
+            ValueError: If the context ID is not found
+        """
+        if context_id not in self._active_phases:
+            raise ValueError(f"No active phase found with ID: {context_id}")
+        
+        context = self._active_phases.pop(context_id)
+        end_time = datetime.now()
+        memory_after = self.get_memory_usage()
+        cpu_after = self.get_cpu_usage()
+        
+        # Calculate memory and CPU usage
+        memory_usage = (
+            memory_after - context.initial_memory 
+            if context.initial_memory is not None and memory_after is not None 
+            else None
+        )
+        
+        cpu_usage = (
+            max(0, cpu_after - context.initial_cpu) 
+            if context.initial_cpu is not None and cpu_after is not None 
+            else None
+        )
+        
+        # Calculate total duration
+        duration_ms = (end_time - context.start_time).total_seconds() * 1000
+        
+        # Create metrics
+        metrics = PhaseMetrics(
+            name=context.name,
+            start_time=context.start_time,
+            end_time=end_time,
+            duration_ms=duration_ms,
+            parallel=parallel,
+            memory_usage_bytes=memory_usage,
+            cpu_percent=cpu_usage
+        )
+        
+        # Store and return
+        self._completed_phases.append(metrics)
+        self._phase_ids[context_id] = metrics
+        if self.collector:
+            self.collector.record_phase(metrics)
+            
+        return metrics 
