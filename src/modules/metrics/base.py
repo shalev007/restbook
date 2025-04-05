@@ -17,7 +17,8 @@ class RequestMetrics:
     status_code: int
     duration_ms: float
     success: bool
-    error: Optional[str] = None
+    error: Optional[str] = None  # Last error encountered
+    errors: List[str] = field(default_factory=list)  # All errors encountered during the request
     request_size_bytes: Optional[int] = None  # Size of request payload in bytes
     response_size_bytes: Optional[int] = None  # Size of response payload in bytes
     memory_usage_bytes: Optional[int] = None  # Memory usage during request in bytes

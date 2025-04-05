@@ -20,6 +20,7 @@ class ResilientHttpClientConfig(BaseModel):
     max_delay: Optional[int] = None  # Maximum delay in seconds between retries
     use_server_retry_delay: bool = True  # Whether to use server's suggested retry delay
     retry_header: str = "Retry-After"  # Header name for server's retry delay
+    retry_on_404: bool = False  # Whether to retry on 404 responses
 
 class RequestParams(BaseModel):
     url: str
@@ -187,12 +188,22 @@ class ResilientHttpClient:
                         self._handle_error(error_msg)
                         raise AuthenticationError("Authentication failed")
                     
+                    
                     # Check if we should retry other errors
                     if response.status in self.RETRY_STATUS_CODES:
                         error_msg = f"Server returned a retryable status code {response.status}, retrying {attempt + 1} of {self.config.max_retries}..."
                         self._handle_error(error_msg)
                         raise RetryableError("Server returned a retryable status code")
                     
+                    # Handle 404 responses based on configuration
+                    if response.status == 404:
+                        if self.config.retry_on_404:
+                            self._handle_error(f"Resource not found (404), retrying {attempt + 1} of {self.config.max_retries}...")
+                            raise RetryableError("Resource not found, retrying")
+                        else:
+                            self._handle_error("Resource not found (404) - not retrying")
+                            return response
+                        
                     # Only record success if circuit breaker exists
                     if self.circuit_breaker:
                         self.circuit_breaker.record_success()

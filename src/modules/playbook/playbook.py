@@ -549,6 +549,7 @@ class Playbook:
                         status_code=metadata.status_code or 0,
                         success=metadata.success or False,
                         error=metadata.errors[-1] if metadata.errors else None,
+                        errors=metadata.errors,
                         request_size_bytes=metadata.request_size_bytes,
                         response_size_bytes=metadata.response_size_bytes
                     )

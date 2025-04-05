@@ -521,6 +521,7 @@ class MetricsManager:
         status_code: int,
         success: bool,
         error: Optional[str] = None,
+        errors: List[str] = [],
         request_size_bytes: Optional[int] = None,
         response_size_bytes: Optional[int] = None
     ) -> RequestMetrics:
@@ -588,6 +589,7 @@ class MetricsManager:
             duration_ms=duration_ms,
             success=success,
             error=error,
+            errors=errors,
             request_size_bytes=request_size_bytes,
             response_size_bytes=response_size_bytes,
             memory_usage_bytes=memory_usage,
