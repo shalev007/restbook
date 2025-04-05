@@ -13,15 +13,16 @@ from .config import (
     RequestConfig, SessionConfig, AuthConfig, AuthCredentials, RetryConfig
 )
 from .validator import PlaybookYamlValidator
-from .template import TemplateRenderer
+from .template_renderer import TemplateRenderer
 from .checkpoint import CheckpointStore, CheckpointData, create_checkpoint_store
 from .variables import VariableManager
+from .metrics import MetricsManager
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
 from ..request.resilient_http_client import RequestParams, ResilientHttpClient, ResilientHttpClientConfig
 from ..request.circuit_breaker import CircuitBreaker
 from ..metrics import (
-    MetricsCollector, RequestMetrics, StepMetrics, PhaseMetrics, PlaybookMetrics,
+    RequestMetrics, StepMetrics, PhaseMetrics, PlaybookMetrics,
     create_metrics_collector
 )
 
@@ -51,10 +52,11 @@ class Playbook:
             self.checkpoint_store = create_checkpoint_store(self.config.incremental)
             logger.log_info(f"Incremental execution enabled. Content hash: {self.content_hash}")
             
-        # Initialize metrics collector if enabled
-        self.metrics_collector: Optional[MetricsCollector] = None
+        # Initialize metrics manager if enabled
+        self.metrics_manager: Optional[MetricsManager] = None
         if self.config.metrics and self.config.metrics.enabled:
-            self.metrics_collector = create_metrics_collector(self.config.metrics)
+            metrics_collector = create_metrics_collector(self.config.metrics)
+            self.metrics_manager = MetricsManager(metrics_collector)
             logger.log_info(f"Metrics collection enabled with collector type: {self.config.metrics.collector}")
 
     def _generate_content_hash(self) -> str:
@@ -239,19 +241,9 @@ class Playbook:
             ValueError: If the session does not exist
             aiohttp.ClientError: If any request fails
         """
-        playbook_start_time = datetime.now()
-        total_requests = 0
-        successful_requests = 0
-        failed_requests = 0
-        phases_metrics = []
-        total_request_size_bytes = 0
-        total_response_size_bytes = 0
-        total_variable_size_bytes = 0
-        peak_memory_usage_bytes = 0
-        cpu_percentages: List[float] = []
-        
-        # Get initial memory usage
-        initial_memory = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
+        # Start metrics collection for the playbook
+        if self.metrics_manager:
+            self.metrics_manager.start_playbook()
         
         try:
             # Check for checkpoint if incremental is enabled
@@ -274,98 +266,68 @@ class Playbook:
                     
                 self.logger.log_info(f"Executing phase {phase_index}: {phase.name}")
                 
-                phase_start_time = datetime.now()
-                phase_steps_metrics = []
-                
-                if phase.parallel:
-                    # For parallel execution, we need to handle checkpoints differently
-                    if checkpoint and phase_index == checkpoint.current_phase:
-                        # This is the phase where we left off - we need to re-run it completely
-                        # since we can't guarantee which steps completed in parallel execution
-                        self.logger.log_info("Restarting parallel phase from beginning")
-                        checkpoint = None
-                    
-                    # Execute steps in parallel
-                    tasks = [
-                        self._execute_step(step, session_store)
-                        for step in phase.steps
-                    ]
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
-                    
-                    # Process results for metrics
-                    for step_index, result in enumerate(results):
-                        if isinstance(result, BaseException):
-                            failed_requests += 1
-                            self.logger.log_error(f"Step {step_index} failed: {str(result)}")
-                        else:
-                            step_metrics, req_count, success_count, fail_count = result
-                            phase_steps_metrics.append(step_metrics)
-                            total_requests += req_count
-                            successful_requests += success_count
-                            failed_requests += fail_count
-                            
-                            # Update request and response sizes
-                            if step_metrics.request:
-                                if step_metrics.request.request_size_bytes:
-                                    total_request_size_bytes += step_metrics.request.request_size_bytes
-                                if step_metrics.request.response_size_bytes:
-                                    total_response_size_bytes += step_metrics.request.response_size_bytes
-                            
-                            # Update variable sizes
-                            for var_name, var_size in step_metrics.variable_sizes.items():
-                                total_variable_size_bytes += var_size
-                    
-                    # Save checkpoint after parallel phase
-                    await self._save_checkpoint(phase_index, len(phase.steps) - 1)
-                else:
-                    # Execute steps sequentially
-                    for step_index, step in enumerate(phase.steps):
-                        # Skip steps before checkpoint in the current phase
-                        if checkpoint and phase_index == checkpoint.current_phase and step_index <= checkpoint.current_step:
-                            self.logger.log_info(f"Skipping step {step_index} (already completed)")
-                            continue
-                            
-                        result = await self._execute_step(step, session_store)
-                        step_metrics, req_count, success_count, fail_count = result
-                        phase_steps_metrics.append(step_metrics)
-                        total_requests += req_count
-                        successful_requests += success_count
-                        failed_requests += fail_count
-                        
-                        # Update request and response sizes
-                        if step_metrics.request:
-                            if step_metrics.request.request_size_bytes:
-                                total_request_size_bytes += step_metrics.request.request_size_bytes
-                            if step_metrics.request.response_size_bytes:
-                                total_response_size_bytes += step_metrics.request.response_size_bytes
-                        
-                        # Update variable sizes
-                        for var_name, var_size in step_metrics.variable_sizes.items():
-                            total_variable_size_bytes += var_size
-                        
-                        # Save checkpoint after each step
-                        await self._save_checkpoint(phase_index, step_index)
-                
-                # Record phase metrics
-                phase_end_time = datetime.now()
-                phase_duration_ms = (phase_end_time - phase_start_time).total_seconds() * 1000
-                phase_metrics = PhaseMetrics(
-                    name=phase.name,
-                    start_time=phase_start_time,
-                    end_time=phase_end_time,
-                    duration_ms=phase_duration_ms,
-                    steps=phase_steps_metrics,
-                    parallel=bool(phase.parallel),  # Convert to bool to satisfy type hint
-                    memory_usage_bytes=self.metrics_collector.get_memory_usage() - initial_memory if self.metrics_collector and initial_memory is not None else None,
-                    cpu_percent=max(0, self.metrics_collector.get_cpu_usage()) if self.metrics_collector else None
+                # Start metrics collection for the phase
+                phase_context_id = (
+                    self.metrics_manager.start_phase(phase.name) if self.metrics_manager else None
                 )
-                phases_metrics.append(phase_metrics)
                 
-                if self.metrics_collector:
-                    self.metrics_collector.record_phase(phase_metrics)
-            
-            # Clear checkpoint after successful execution
-            await self._clear_checkpoint()
+                try:
+                    if phase.parallel:
+                        # For parallel execution, we need to handle checkpoints differently
+                        if checkpoint and phase_index == checkpoint.current_phase:
+                            # This is the phase where we left off - we need to re-run it completely
+                            # since we can't guarantee which steps completed in parallel execution
+                            self.logger.log_info("Restarting parallel phase from beginning")
+                            checkpoint = None
+                        
+                        # Execute steps in parallel
+                        tasks = [
+                            self._execute_step(step, session_store, phase_context_id)
+                            for step in phase.steps
+                        ]
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
+                        
+                        # Process results and log errors
+                        for step_index, result in enumerate(results):
+                            if isinstance(result, BaseException):
+                                self.logger.log_error(f"Step {step_index} failed: {str(result)}")
+                        
+                        # Save checkpoint after parallel phase
+                        await self._save_checkpoint(phase_index, len(phase.steps) - 1)
+                    else:
+                        # Execute steps sequentially
+                        for step_index, step in enumerate(phase.steps):
+                            # Skip steps before checkpoint in the current phase
+                            if checkpoint and phase_index == checkpoint.current_phase and step_index <= checkpoint.current_step:
+                                self.logger.log_info(f"Skipping step {step_index} (already completed)")
+                                continue
+                                
+                            await self._execute_step(step, session_store, phase_context_id)
+                            
+                            # Save checkpoint after each step
+                            await self._save_checkpoint(phase_index, step_index)
+                    
+                    # End metrics collection for the phase - the step metrics are now tracked internally by the MetricsManager
+                    if self.metrics_manager and phase_context_id:
+                        self.metrics_manager.end_phase(
+                            context_id=phase_context_id,
+                            parallel=bool(phase.parallel)
+                        )
+                except Exception as e:
+                    # Clean up the phase metrics context in case of error
+                    if self.metrics_manager and phase_context_id:
+                        # Try to end the phase metrics but continue if it fails
+                        try:
+                            self.metrics_manager.end_phase(
+                                context_id=phase_context_id,
+                                parallel=bool(phase.parallel)
+                            )
+                        except Exception:
+                            pass
+                    raise
+                
+                # Clear checkpoint after successful execution
+                await self._clear_checkpoint()
             
         except Exception as e:
             self.logger.log_error(str(e))
@@ -374,108 +336,28 @@ class Playbook:
             # Clean up temporary sessions
             self._temp_sessions.clear()
             
-            # Get final memory usage and calculate peak
-            final_memory = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
-            if initial_memory is not None and final_memory is not None:
-                peak_memory_usage_bytes = max(initial_memory, final_memory)
+            # Clean up any active metrics contexts
+            if self.metrics_manager:
+                self.metrics_manager.cleanup()
             
-            # Calculate average CPU usage
-            average_cpu_percent = sum(cpu_percentages) / len(cpu_percentages) if cpu_percentages else None
-            
-            # Record playbook metrics
-            if self.metrics_collector:
-                playbook_end_time = datetime.now()
-                playbook_duration_ms = (playbook_end_time - playbook_start_time).total_seconds() * 1000
-                playbook_metrics = PlaybookMetrics(
-                    start_time=playbook_start_time,
-                    end_time=playbook_end_time,
-                    duration_ms=playbook_duration_ms,
-                    phases=phases_metrics,
-                    total_requests=total_requests,
-                    successful_requests=successful_requests,
-                    failed_requests=failed_requests,
-                    total_duration_ms=playbook_duration_ms,
-                    peak_memory_usage_bytes=peak_memory_usage_bytes,
-                    average_cpu_percent=average_cpu_percent,
-                    total_request_size_bytes=total_request_size_bytes,
-                    total_response_size_bytes=total_response_size_bytes,
-                    total_variable_size_bytes=total_variable_size_bytes
-                )
-                self.metrics_collector.record_playbook(playbook_metrics)
-                self.metrics_collector.finalize()
+            # Finalize playbook metrics
+            if self.metrics_manager:
+                self.metrics_manager.finalize_playbook()
 
-    async def _execute_phase(self, phase: PhaseConfig, session_store: SessionStore) -> None:
-        """Execute a single phase of the playbook."""
-        phase_start_time = datetime.now()
-        phase_steps_metrics = []
-        
-        # Get memory and CPU usage before phase
-        memory_before = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
-        cpu_before = self.metrics_collector.get_cpu_usage() if self.metrics_collector else None
-        
-        if phase.parallel:
-            # Execute steps in parallel
-            tasks = [
-                self._execute_step(step, session_store)
-                for step in phase.steps
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # Process results for metrics
-            for result in results:
-                if isinstance(result, BaseException):
-                    self.logger.log_error(f"Step failed: {str(result)}")
-                else:
-                    step_metrics, _, _, _ = result
-                    phase_steps_metrics.append(step_metrics)
-        else:
-            # Execute steps sequentially
-            for step in phase.steps:
-                result = await self._execute_step(step, session_store)
-                step_metrics, _, _, _ = result
-                phase_steps_metrics.append(step_metrics)
-        
-        # Get memory and CPU usage after phase
-        memory_after = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
-        cpu_after = self.metrics_collector.get_cpu_usage() if self.metrics_collector else None
-        
-        # Record phase metrics
-        phase_end_time = datetime.now()
-        phase_duration_ms = (phase_end_time - phase_start_time).total_seconds() * 1000
-        phase_metrics = PhaseMetrics(
-            name=phase.name,
-            start_time=phase_start_time,
-            end_time=phase_end_time,
-            duration_ms=phase_duration_ms,
-            steps=phase_steps_metrics,
-            parallel=bool(phase.parallel),  # Convert to bool to satisfy type hint
-            memory_usage_bytes=memory_after - memory_before if memory_before is not None and memory_after is not None else None,
-            cpu_percent=max(0, cpu_after - cpu_before) if cpu_before is not None and cpu_after is not None else None
-        )
-        
-        if self.metrics_collector:
-            self.metrics_collector.record_phase(phase_metrics)
-
-    async def _execute_step(self, step: StepConfig, session_store: SessionStore) -> tuple[StepMetrics, int, int, int]:
+    async def _execute_step(self, step: StepConfig, session_store: SessionStore, phase_context_id: Optional[str] = None) -> Optional[StepMetrics]:
         """
         Execute a single step of the playbook.
         
+        Args:
+            step: The step configuration to execute
+            session_store: Session store for retrieving sessions
+            phase_context_id: Optional ID of the parent phase context
+            
         Returns:
-            Tuple containing:
-            - StepMetrics: Metrics for the step
-            - int: Total number of requests
-            - int: Number of successful requests
-            - int: Number of failed requests
+            Optional[StepMetrics]: Metrics for the step if metrics collection is enabled
         """
-        step_start_time = datetime.now()
-        total_requests = 0
-        successful_requests = 0
-        failed_requests = 0
-        request_metrics_list: List[RequestMetrics] = []
-        
-        # Get memory and CPU usage before step
-        memory_before = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
-        cpu_before = self.metrics_collector.get_cpu_usage() if self.metrics_collector else None
+        # Start metrics collection for the step
+        step_context_id = self.metrics_manager.start_step(step.session, phase_context_id) if self.metrics_manager else None
         
         try:
             if step.iterate:
@@ -508,33 +390,16 @@ class Playbook:
                         rendered_step.store = None
                     
                     # Add task for this iteration
-                    tasks.append(self._execute_single_step(rendered_step, session_store))
+                    tasks.append(self._execute_single_step(rendered_step, session_store, step_context_id))
 
                 # Execute iterations based on parallel flag
                 if step.parallel:
                     self.logger.log_info(f"Executing {len(tasks)} iterations in parallel")
-                    results = await asyncio.gather(*tasks, return_exceptions=True)
-                    
-                    # Process results for metrics
-                    for result in results:
-                        if isinstance(result, BaseException):
-                            failed_requests += 1
-                            self.logger.log_error(f"Iteration failed: {str(result)}")
-                        else:
-                            req_metrics, req_count, success_count, fail_count = result
-                            request_metrics_list.append(req_metrics)
-                            total_requests += req_count
-                            successful_requests += success_count
-                            failed_requests += fail_count
+                    await asyncio.gather(*tasks, return_exceptions=True)
                 else:
                     self.logger.log_info(f"Executing {len(tasks)} iterations sequentially")
                     for task in tasks:
-                        result = await task
-                        req_metrics, req_count, success_count, fail_count = result
-                        request_metrics_list.append(req_metrics)
-                        total_requests += req_count
-                        successful_requests += success_count
-                        failed_requests += fail_count
+                        await task
             else:
                 context = {
                     **self.variables.get_all(),
@@ -546,70 +411,46 @@ class Playbook:
                 else:
                     rendered_step.store = None
                 # Execute step directly if no iteration is configured
-                result = await self._execute_single_step(rendered_step, session_store)
-                req_metrics, req_count, success_count, fail_count = result
-                request_metrics_list.append(req_metrics)
-                total_requests += req_count
-                successful_requests += success_count
-                failed_requests += fail_count
+                await self._execute_single_step(rendered_step, session_store, step_context_id)
 
         except Exception as e:
             if step.on_error == "ignore":
                 self.logger.log_info(f"Step failed but continuing: {str(e)}")
-                failed_requests += 1
+                if self.metrics_manager:
+                    self.metrics_manager.increment_request_count(step_context_id, False)
             else:
                 raise
         
-        # Get memory and CPU usage after step
-        memory_after = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
-        cpu_after = self.metrics_collector.get_cpu_usage() if self.metrics_collector else None
-        
-        # Calculate variable sizes if metrics collector is enabled
+        # Calculate variable sizes if metrics manager is enabled
         variable_sizes = {}
-        if self.metrics_collector and step.store:
+        if self.metrics_manager and step.store:
             for store_config in step.store:
                 var_name = store_config.var
                 if self.variables.has(var_name):
                     var_value = self.variables.get(var_name)
-                    variable_sizes[var_name] = self.metrics_collector.get_object_size(var_value)
+                    variable_sizes[var_name] = self.metrics_manager.get_object_size(var_value)
         
-        # Create step metrics
-        step_end_time = datetime.now()
-        step_duration_ms = (step_end_time - step_start_time).total_seconds() * 1000
-        step_metrics = StepMetrics(
-            session=step.session,
-            request=request_metrics_list[0] if request_metrics_list else RequestMetrics(
-                method=step.request.method.value,
-                endpoint=step.request.endpoint,
-                start_time=step_start_time,
-                end_time=step_end_time,
-                status_code=0,
-                duration_ms=step_duration_ms,
-                success=False,
-                error="No requests executed"
-            ),
-            retry_count=0,  # This would need to be tracked in the request execution
-            store_vars=[store.var for store in (step.store or [])],
-            variable_sizes=variable_sizes,
-            memory_usage_bytes=memory_after - memory_before if memory_before is not None and memory_after is not None else None,
-            cpu_percent=max(0, cpu_after - cpu_before) if cpu_before is not None and cpu_after is not None else None
-        )
+        # End metrics collection for the step
+        step_metrics = None
+        if self.metrics_manager and step_context_id:
+            step_metrics = self.metrics_manager.end_step(
+                context_id=step_context_id,
+                request_metrics=None,
+                retry_count=0,  # This would need to be tracked in the request execution
+                store_vars=[store.var for store in (step.store or [])],
+                variable_sizes=variable_sizes
+            )
         
-        if self.metrics_collector:
-            self.metrics_collector.record_step(step_metrics)
-        
-        return step_metrics, total_requests, successful_requests, failed_requests
+        return step_metrics
 
-    async def _execute_single_step(self, step: StepConfig, session_store: SessionStore) -> tuple[RequestMetrics, int, int, int]:
+    async def _execute_single_step(self, step: StepConfig, session_store: SessionStore, step_context_id: Optional[str] = None) -> None:
         """
         Execute a single step without iteration.
         
-        Returns:
-            Tuple containing:
-            - RequestMetrics: Metrics for the request
-            - int: Total number of requests (always 1 for this method)
-            - int: Number of successful requests
-            - int: Number of failed requests
+        Args:
+            step: The step configuration
+            session_store: The session store for retrieving sessions
+            step_context_id: Optional ID of the parent step context for metrics tracking
         """
         # Get session for this step
         if step.session in self._temp_sessions:
@@ -652,8 +493,8 @@ class Playbook:
             max_retries=retry_config.max_retries,
             backoff_factor=retry_config.backoff_factor,
             max_delay=retry_config.max_delay,
-            use_server_retry_delay=retry_config.rate_limit.use_server_retry_delay,
-            retry_header=retry_config.rate_limit.retry_header
+            use_server_retry_delay=retry_config.rate_limit.use_server_retry_delay if step.retry and step.retry.rate_limit else False,
+            retry_header=retry_config.rate_limit.retry_header if step.retry and step.retry.rate_limit and retry_config.rate_limit.retry_header else ""
         )
 
         # Convert playbook request config to executor request config
@@ -667,7 +508,15 @@ class Playbook:
             circuit_breaker=circuit_breaker
         )
 
-        request_start_time = datetime.now()
+        # Start metrics collection for the request
+        request_context_id = None
+        if self.metrics_manager:
+            request_context_id = self.metrics_manager.start_request(
+                method=step.request.method.value,
+                endpoint=step.request.endpoint,
+                step_context_id=step_context_id
+            )
+        
         success = False
         error = None
         status_code = 0
@@ -682,10 +531,6 @@ class Playbook:
                 request_size_bytes = len(request_config.data.encode('utf-8'))
             elif isinstance(request_config.data, bytes):
                 request_size_bytes = len(request_config.data)
-        
-        # Get memory and CPU usage before request
-        memory_before = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
-        cpu_before = self.metrics_collector.get_cpu_usage() if self.metrics_collector else None
         
         try:
             # Execute request
@@ -722,32 +567,16 @@ class Playbook:
             # Ensure executor is closed
             await client.close()
             
-            # Get memory and CPU usage after request
-            memory_after = self.metrics_collector.get_memory_usage() if self.metrics_collector else None
-            cpu_after = self.metrics_collector.get_cpu_usage() if self.metrics_collector else None
-            
-            # Create request metrics
-            request_end_time = datetime.now()
-            duration_ms = (request_end_time - request_start_time).total_seconds() * 1000
-            request_metrics = RequestMetrics(
-                method=step.request.method.value,
-                endpoint=step.request.endpoint,
-                start_time=request_start_time,
-                end_time=request_end_time,
-                status_code=status_code,
-                duration_ms=duration_ms,
-                success=success,
-                error=error,
-                request_size_bytes=request_size_bytes,
-                response_size_bytes=response_size_bytes,
-                memory_usage_bytes=memory_after - memory_before if memory_before is not None and memory_after is not None else None,
-                cpu_percent=max(0, cpu_after - cpu_before) if cpu_before is not None and cpu_after is not None else None
-            )
-            
-            if self.metrics_collector:
-                self.metrics_collector.record_request(request_metrics)
-            
-            return request_metrics, 1, 1 if success else 0, 0 if success else 1
+            # End metrics collection for the request
+            if self.metrics_manager and request_context_id:
+                self.metrics_manager.end_request(
+                    context_id=request_context_id,
+                    status_code=status_code,
+                    success=success,
+                    error=error,
+                    request_size_bytes=request_size_bytes,
+                    response_size_bytes=response_size_bytes
+                )
 
     def _convert_to_executor_config(self, playbook_config: RequestConfig) -> RequestParams:
         """Convert a playbook request config to an executor request config.
