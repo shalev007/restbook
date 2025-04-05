@@ -344,7 +344,7 @@ class Playbook:
             if self.metrics_manager:
                 self.metrics_manager.finalize_playbook()
 
-    async def _execute_step(self, step: StepConfig, session_store: SessionStore, phase_context_id: Optional[str] = None) -> Optional[StepMetrics]:
+    async def _execute_step(self, step: StepConfig, session_store: SessionStore, phase_context_id: Optional[str] = None) -> None:
         """
         Execute a single step of the playbook.
         
@@ -352,9 +352,6 @@ class Playbook:
             step: The step configuration to execute
             session_store: Session store for retrieving sessions
             phase_context_id: Optional ID of the parent phase context
-            
-        Returns:
-            Optional[StepMetrics]: Metrics for the step if metrics collection is enabled
         """
         # Start metrics collection for the step
         step_context_id = self.metrics_manager.start_step(step.session, phase_context_id) if self.metrics_manager else None
@@ -431,17 +428,14 @@ class Playbook:
                     variable_sizes[var_name] = self.metrics_manager.get_object_size(var_value)
         
         # End metrics collection for the step
-        step_metrics = None
         if self.metrics_manager and step_context_id:
-            step_metrics = self.metrics_manager.end_step(
+            self.metrics_manager.end_step(
                 context_id=step_context_id,
                 request_metrics=None,
                 retry_count=0,  # This would need to be tracked in the request execution
                 store_vars=[store.var for store in (step.store or [])],
                 variable_sizes=variable_sizes
             )
-        
-        return step_metrics
 
     async def _execute_single_step(self, step: StepConfig, session_store: SessionStore, step_context_id: Optional[str] = None) -> None:
         """
