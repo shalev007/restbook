@@ -47,7 +47,7 @@ class ResourceUsageTracker:
 class PlaybookContext:
     """Tracks playbook-level context."""
     start_time: datetime
-    initial_memory: Optional[int] = None
+    initial_memory: int = 0
 
 @dataclass
 class PhaseContext:
@@ -56,19 +56,20 @@ class PhaseContext:
     name: str
     start_time: datetime
     step_ids: Set[str] = field(default_factory=set)
-    initial_memory: Optional[int] = None
-    initial_cpu: Optional[float] = None
+    initial_memory: int = 0
+    initial_cpu: float = 0
 
 @dataclass
 class StepContext:
     """Tracks step-level context."""
     id: str
+    step_index: int
     session: str
     start_time: datetime
-    phase_id: Optional[str] = None
+    phase_id: str
     request_ids: Set[str] = field(default_factory=set)
-    initial_memory: Optional[int] = None
-    initial_cpu: Optional[float] = None
+    initial_memory: int = 0
+    initial_cpu: float = 0
 
 @dataclass
 class RequestContext:
@@ -77,9 +78,9 @@ class RequestContext:
     method: str
     endpoint: str
     start_time: datetime
-    step_id: Optional[str] = None
-    initial_memory: Optional[int] = None
-    initial_cpu: Optional[float] = None
+    step_id: str
+    initial_memory: int = 0
+    initial_cpu: float = 0
 
     def end(self, 
             end_time: datetime,
@@ -169,13 +170,13 @@ class MetricsManager:
             initial_memory=initial_memory
         )
     
-    def get_memory_usage(self) -> Optional[int]:
+    def get_memory_usage(self) -> int:
         """Get current memory usage in bytes."""
-        return self.collector.get_memory_usage() if self.collector else None
+        return self.collector.get_memory_usage() if self.collector else 0
     
-    def get_cpu_usage(self) -> Optional[float]:
+    def get_cpu_usage(self) -> float:
         """Get current CPU usage percentage."""
-        return self.collector.get_cpu_usage() if self.collector else None
+        return self.collector.get_cpu_usage() if self.collector else 0
     
     def get_object_size(self, obj: Any) -> int:
         """Get size of an object in bytes."""
@@ -296,11 +297,12 @@ class MetricsManager:
         self._active_phases[phase_id] = context
         return phase_id
     
-    def start_step(self, session: str, phase_context_id: Optional[str] = None) -> str:
+    def start_step(self, step_index: int, session: str, phase_context_id: str) -> str:
         """
         Start timing and metrics collection for a step.
         
         Args:
+            step_index: The index of the step in the phase
             session: The session name for this step
             phase_context_id: Optional ID of the parent phase context
             
@@ -310,6 +312,7 @@ class MetricsManager:
         step_id = str(uuid.uuid4())
         context = StepContext(
             id=step_id,
+            step_index=step_index,
             session=session,
             phase_id=phase_context_id,
             start_time=datetime.now(),
@@ -323,7 +326,7 @@ class MetricsManager:
             
         return step_id
     
-    def start_request(self, method: str, endpoint: str, step_context_id: Optional[str] = None) -> str:
+    def start_request(self, method: str, endpoint: str, step_context_id: str) -> str:
         """
         Start timing and metrics collection for a request.
         
@@ -399,6 +402,12 @@ class MetricsManager:
             memory_after=memory_after,
             cpu_after=cpu_after
         )
+        step = self._active_steps.get(context.step_id)
+        if step:
+            metrics.step = step.step_index
+            phase = self._active_phases.get(step.phase_id)
+            if phase:
+                metrics.phase = phase.name
         
         # Update resource usage
         if metrics.memory_usage_bytes is not None:
@@ -524,8 +533,11 @@ class MetricsManager:
             variable_sizes=variable_sizes or {},
             memory_usage_bytes=memory_usage,
             cpu_percent=cpu_usage,
-            phase=context.phase_id
         )
+
+        phase = self._active_phases.get(context.phase_id)
+        if phase:
+            metrics.phase = phase.name
         
         # Store and return
         self._completed_steps[context_id] = metrics

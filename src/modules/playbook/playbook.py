@@ -282,8 +282,8 @@ class Playbook:
                         
                         # Execute steps in parallel
                         tasks = [
-                            self._execute_step(step, session_store, phase_context_id)
-                            for step in phase.steps
+                            self._execute_step(step, step_index, session_store, phase_context_id)
+                            for step_index, step in enumerate(phase.steps)
                         ]
                         results = await asyncio.gather(*tasks, return_exceptions=True)
                         
@@ -302,7 +302,7 @@ class Playbook:
                                 self.logger.log_info(f"Skipping step {step_index} (already completed)")
                                 continue
                                 
-                            await self._execute_step(step, session_store, phase_context_id)
+                            await self._execute_step(step, step_index, session_store, phase_context_id)
                             
                             # Save checkpoint after each step
                             await self._save_checkpoint(phase_index, step_index)
@@ -342,7 +342,7 @@ class Playbook:
                 self.metrics_manager.finalize_playbook()
                 self.metrics_manager.cleanup()
 
-    async def _execute_step(self, step: StepConfig, session_store: SessionStore, phase_context_id: Optional[str] = None) -> None:
+    async def _execute_step(self, step: StepConfig, step_index: int, session_store: SessionStore, phase_context_id: Optional[str] = None) -> None:
         """
         Execute a single step of the playbook.
         
@@ -350,9 +350,10 @@ class Playbook:
             step: The step configuration to execute
             session_store: Session store for retrieving sessions
             phase_context_id: Optional ID of the parent phase context
+            step_index: Index of the step in the phase
         """
         # Start metrics collection for the step
-        step_context_id = self.metrics_manager.start_step(step.session, phase_context_id) if self.metrics_manager else None
+        step_context_id = self.metrics_manager.start_step(step_index, step.session, phase_context_id) if self.metrics_manager and phase_context_id else None
         
         try:
             if step.iterate:
@@ -501,7 +502,7 @@ class Playbook:
 
         # Start metrics collection for the request
         request_context_id = None
-        if self.metrics_manager:
+        if self.metrics_manager and step_context_id:
             request_context_id = self.metrics_manager.start_request(
                 method=step.request.method.value,
                 endpoint=step.request.endpoint,
