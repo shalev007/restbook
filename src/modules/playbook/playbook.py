@@ -414,27 +414,25 @@ class Playbook:
         except Exception as e:
             if step.on_error == "ignore":
                 self.logger.log_info(f"Step failed but continuing: {str(e)}")
-                if self.metrics_manager:
+                if self.metrics_manager and step_context_id:
                     self.metrics_manager.increment_request_count(step_context_id, False)
             else:
                 raise
         
-        # Calculate variable sizes if metrics manager is enabled
-        variable_sizes = {}
-        if self.metrics_manager and step_rendered_store:
-            for store_config in step_rendered_store:
-                var_name = store_config.var
-                if self.variables.has(var_name):
-                    var_value = self.variables.get(var_name)
-                    variable_sizes[var_name] = self.metrics_manager.get_object_size(var_value)
-        
         # End metrics collection for the step
         if self.metrics_manager and step_context_id:
+            # Create dictionary of variable names to values
+            store_vars = {}
+            if step_rendered_store:
+                for store_config in step_rendered_store:
+                    var_name = store_config.var
+                    if self.variables.has(var_name):
+                        store_vars[var_name] = self.variables.get(var_name)
+            
             self.metrics_manager.end_step(
                 context_id=step_context_id,
                 retry_count=0,  # This would need to be tracked in the request execution
-                store_vars=[store.var for store in (step_rendered_store or [])],
-                variable_sizes=variable_sizes
+                store_vars=store_vars
             )
 
     async def _execute_single_step(self, step: StepConfig, session_store: SessionStore, step_context_id: Optional[str] = None) -> None:

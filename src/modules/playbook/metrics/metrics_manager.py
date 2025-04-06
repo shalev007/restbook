@@ -489,9 +489,8 @@ class MetricsManager:
     def end_step(
         self,
         context_id: str,
-        retry_count: int = 0,
-        store_vars: Optional[List[str]] = None,
-        variable_sizes: Optional[Dict[str, int]] = None
+        retry_count: int,
+        store_vars: Dict[str, Any]
     ) -> StepMetrics:
         """
         End timing and metrics collection for a step.
@@ -499,8 +498,7 @@ class MetricsManager:
         Args:
             context_id: The context ID returned from start_step
             retry_count: Number of retries for this step
-            store_vars: List of variables stored during this step
-            variable_sizes: Sizes of stored variables in bytes
+            store_vars: Dictionary mapping variable names to their values
             
         Returns:
             StepMetrics: Metrics for the step
@@ -519,16 +517,19 @@ class MetricsManager:
         # We know phase exists
         phase = self._active_phases[context.phase_id]
         
-        # Update total variable size
-        if variable_sizes:
-            self._request_counts.total_variable_size += sum(variable_sizes.values())
+        # Calculate variable sizes
+        variable_sizes = {}
+        for var_name, var_value in store_vars.items():
+            size = self.get_object_size(var_value)
+            variable_sizes[var_name] = size
+            self._request_counts.total_variable_size += size
         
         # Create metrics
         metrics = StepMetrics(
             session=context.session,
             retry_count=retry_count,
-            store_vars=store_vars or [],
-            variable_sizes=variable_sizes or {},
+            store_vars=list(store_vars.keys()),
+            variable_sizes=variable_sizes,
             memory_usage_bytes=memory_after - context.initial_memory,
             cpu_percent=max(0, cpu_after - context.initial_cpu),
             phase=phase.name
