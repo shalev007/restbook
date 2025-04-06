@@ -182,7 +182,7 @@ class MetricsManager:
         """Get size of an object in bytes."""
         return self.collector.get_object_size(obj) if self.collector else 0
     
-    def increment_request_count(self, step_context_id: Optional[str], success: bool = True) -> None:
+    def increment_request_count(self, step_context_id: str, success: bool = True) -> None:
         """
         Increment request counts for a step.
         
@@ -304,11 +304,17 @@ class MetricsManager:
         Args:
             step_index: The index of the step in the phase
             session: The session name for this step
-            phase_context_id: Optional ID of the parent phase context
+            phase_context_id: ID of the parent phase context
             
         Returns:
             str: Context ID for the step
+            
+        Raises:
+            ValueError: If the phase does not exist
         """
+        if phase_context_id not in self._active_phases:
+            raise ValueError(f"No active phase found with ID: {phase_context_id}")
+            
         step_id = str(uuid.uuid4())
         context = StepContext(
             id=step_id,
@@ -320,10 +326,7 @@ class MetricsManager:
             initial_cpu=self.get_cpu_usage()
         )
         self._active_steps[step_id] = context
-        
-        if phase_context_id and phase_context_id in self._active_phases:
-            self._active_phases[phase_context_id].step_ids.add(step_id)
-            
+        self._active_phases[phase_context_id].step_ids.add(step_id)
         return step_id
     
     def start_request(self, method: str, endpoint: str, step_context_id: str) -> str:
@@ -333,11 +336,17 @@ class MetricsManager:
         Args:
             method: HTTP method
             endpoint: Request endpoint
-            step_context_id: Optional ID of the parent step context
+            step_context_id: ID of the parent step context
             
         Returns:
             str: Context ID for the request
+            
+        Raises:
+            ValueError: If the step does not exist
         """
+        if step_context_id not in self._active_steps:
+            raise ValueError(f"No active step found with ID: {step_context_id}")
+            
         request_id = str(uuid.uuid4())
         context = RequestContext(
             id=request_id,
@@ -349,10 +358,7 @@ class MetricsManager:
             initial_cpu=self.get_cpu_usage()
         )
         self._active_requests[request_id] = context
-        
-        if step_context_id and step_context_id in self._active_steps:
-            self._active_steps[step_context_id].request_ids.add(request_id)
-            
+        self._active_steps[step_context_id].request_ids.add(request_id)
         return request_id
     
     def end_request(
@@ -390,6 +396,10 @@ class MetricsManager:
         memory_after = self.get_memory_usage()
         cpu_after = self.get_cpu_usage()
         
+        # We know step exists and has phase_id
+        step = self._active_steps[context.step_id]
+        phase = self._active_phases[step.phase_id]
+        
         # Create metrics
         metrics = context.end(
             end_time=end_time,
@@ -402,12 +412,6 @@ class MetricsManager:
             memory_after=memory_after,
             cpu_after=cpu_after
         )
-        step = self._active_steps.get(context.step_id)
-        if step:
-            metrics.step = step.step_index
-            phase = self._active_phases.get(step.phase_id)
-            if phase:
-                metrics.phase = phase.name
         
         # Update resource usage
         if metrics.memory_usage_bytes is not None:
@@ -512,22 +516,12 @@ class MetricsManager:
         memory_after = self.get_memory_usage()
         cpu_after = self.get_cpu_usage()
         
-        # Calculate memory and CPU usage
-        memory_usage = (
-            memory_after - context.initial_memory 
-            if context.initial_memory is not None and memory_after is not None 
-            else None
-        )
+        # We know phase exists
+        phase = self._active_phases[context.phase_id]
         
-        cpu_usage = (
-            max(0, cpu_after - context.initial_cpu) 
-            if context.initial_cpu is not None and cpu_after is not None 
-            else None
-        )
-        
+        # Update total variable size
         if variable_sizes:
-            for var in variable_sizes:
-                self._request_counts.total_variable_size += variable_sizes[var]
+            self._request_counts.total_variable_size += sum(variable_sizes.values())
         
         # Create metrics
         metrics = StepMetrics(
@@ -535,13 +529,10 @@ class MetricsManager:
             retry_count=retry_count,
             store_vars=store_vars or [],
             variable_sizes=variable_sizes or {},
-            memory_usage_bytes=memory_usage,
-            cpu_percent=cpu_usage,
+            memory_usage_bytes=memory_after - context.initial_memory,
+            cpu_percent=max(0, cpu_after - context.initial_cpu),
+            phase=phase.name
         )
-
-        phase = self._active_phases.get(context.phase_id)
-        if phase:
-            metrics.phase = phase.name
         
         # Store and return
         self._completed_steps[context_id] = metrics
@@ -576,31 +567,15 @@ class MetricsManager:
         memory_after = self.get_memory_usage()
         cpu_after = self.get_cpu_usage()
         
-        # Calculate memory and CPU usage
-        memory_usage = (
-            memory_after - context.initial_memory 
-            if context.initial_memory is not None and memory_after is not None 
-            else None
-        )
-        
-        cpu_usage = (
-            max(0, cpu_after - context.initial_cpu) 
-            if context.initial_cpu is not None and cpu_after is not None 
-            else None
-        )
-        
-        # Calculate total duration
-        duration_ms = (end_time - context.start_time).total_seconds() * 1000
-        
         # Create metrics
         metrics = PhaseMetrics(
             name=context.name,
             start_time=context.start_time,
             end_time=end_time,
-            duration_ms=duration_ms,
+            duration_ms=(end_time - context.start_time).total_seconds() * 1000,
             parallel=parallel,
-            memory_usage_bytes=memory_usage,
-            cpu_percent=cpu_usage
+            memory_usage_bytes=memory_after - context.initial_memory,
+            cpu_percent=max(0, cpu_after - context.initial_cpu)
         )
         
         # Store and return
