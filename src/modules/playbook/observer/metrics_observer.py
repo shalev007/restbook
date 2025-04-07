@@ -221,6 +221,9 @@ class MetricsObserver(ExecutionObserver):
         memory_after = self.get_memory_usage()
         cpu_after = self.get_cpu_usage()
         
+        # Calculate memory usage, ensuring it's never negative
+        memory_usage = max(0, memory_after - phase.initial_memory)
+        
         # Create metrics
         metrics = PhaseMetrics(
             name=phase.name,
@@ -228,7 +231,7 @@ class MetricsObserver(ExecutionObserver):
             end_time=event.timestamp,
             duration_ms=(event.timestamp - phase.start_time).total_seconds() * 1000,
             parallel=event.parallel,
-            memory_usage_bytes=memory_after - phase.initial_memory,
+            memory_usage_bytes=memory_usage,
             cpu_percent=max(0, cpu_after - phase.initial_cpu)
         )
         
@@ -261,13 +264,13 @@ class MetricsObserver(ExecutionObserver):
             variable_sizes[var_name] = size
             self._request_counts.total_variable_size += size
         
-        # Create metrics
+        # Create metrics with non-negative memory and CPU values
         metrics = StepMetrics(
             session=step.session,
             retry_count=event.retry_count,
             store_vars=list(event.store_vars.keys()),
             variable_sizes=variable_sizes,
-            memory_usage_bytes=memory_after - step.initial_memory,
+            memory_usage_bytes=max(0, memory_after - step.initial_memory),
             cpu_percent=max(0, cpu_after - step.initial_cpu),
             step=step.step_index,
             phase=phase.name
@@ -296,7 +299,7 @@ class MetricsObserver(ExecutionObserver):
         step = self._active_steps[request.step_id]
         phase = self._active_phases[step.phase_id]
         
-        # Create metrics
+        # Create metrics with non-negative memory and CPU values
         metrics = RequestMetrics(
             method=request.method,
             endpoint=request.endpoint,
@@ -309,13 +312,13 @@ class MetricsObserver(ExecutionObserver):
             errors=event.errors or [],
             request_size_bytes=event.request_size_bytes,
             response_size_bytes=event.response_size_bytes,
-            memory_usage_bytes=memory_after - request.initial_memory,
+            memory_usage_bytes=max(0, memory_after - request.initial_memory),
             cpu_percent=max(0, cpu_after - request.initial_cpu),
             step=step.step_index,
             phase=phase.name
         )
         
-        # Update resource usage
+        # Update resource usage with non-negative values
         if metrics.memory_usage_bytes is not None:
             self._resource_usage.update_memory(metrics.memory_usage_bytes)
         if metrics.cpu_percent is not None:

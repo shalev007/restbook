@@ -96,13 +96,17 @@ class MetricsCollector(ABC):
     def get_memory_usage() -> int:
         """Get current memory usage in bytes."""
         process = psutil.Process(os.getpid())
-        return process.memory_info().rss  # Return in bytes
+        # Use memory_info().rss for resident set size, which is more stable than memory_info().vms
+        # Also ensure we never return negative values
+        return max(0, process.memory_info().rss)
     
     @staticmethod
     def get_cpu_usage() -> float:
         """Get current CPU usage as percentage."""
         process = psutil.Process(os.getpid())
-        return process.cpu_percent(interval=0.1)
+        # Use interval=0.1 to get a more accurate measurement
+        # Also ensure we never return negative values
+        return max(0.0, process.cpu_percent(interval=0.1))
     
     @staticmethod
     def get_object_size(obj: Any) -> int:
