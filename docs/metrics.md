@@ -59,7 +59,9 @@ RestBook supports three types of metrics collectors:
   "request_size_bytes": 1024,
   "response_size_bytes": 2048,
   "memory_usage_bytes": 1048576,
-  "cpu_percent": 5.2
+  "cpu_percent": 5.2,
+  "step": 1,
+  "phase": "fetch-users"
 }
 ```
 
@@ -203,4 +205,33 @@ The console collector provides real-time metrics during playbook execution:
 5. **Analyze Trends**: Use historical metrics to:
    - Identify performance degradation
    - Optimize resource usage
-   - Plan capacity requirements 
+   - Plan capacity requirements
+
+### Context Tracking
+
+RestBook uses a hierarchical context tracking system to properly associate metrics with their execution context:
+
+1. **Playbook Context**: Each playbook execution has a unique context ID
+2. **Phase Context**: Each phase has a unique context ID and references its parent playbook
+3. **Step Context**: Each step has a unique context ID and references its parent phase
+4. **Request Context**: Each request has a unique context ID and references its parent step and phase
+
+This system ensures that:
+- Multiple requests to the same endpoint are properly tracked
+- Metrics can be aggregated at any level (playbook, phase, step)
+- The execution hierarchy is preserved in the metrics data
+
+For example, when executing parallel requests to the same endpoint:
+```yaml
+phases:
+  - name: "Create Posts"
+    steps:
+      - session: api
+        parallel: true
+        iterate: "user_id in users"
+        request:
+          method: POST
+          endpoint: "/posts"
+```
+
+Each request will have a unique context ID based on its step context, allowing proper tracking of metrics for each individual request. 
