@@ -19,7 +19,7 @@ from ..session.session_store import SessionStore
 from ..logging import BaseLogger
 from ..request.resilient_http_client import RequestParams, ResilientHttpClient, ResilientHttpClientConfig
 from ..request.circuit_breaker import CircuitBreaker
-from ..metrics import (
+from .metrics import (
     create_metrics_collector
 )
 from .observer import (

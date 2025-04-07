@@ -3,12 +3,12 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List, Set
 from dataclasses import dataclass, field
 
-from ...metrics.base import MetricsCollector
-from ...metrics.base import (
+from src.modules.playbook.metrics.base import MetricsCollector
+from src.modules.playbook.metrics.base import (
     RequestMetrics, StepMetrics, PhaseMetrics, PlaybookMetrics
 )
-from .base import ExecutionObserver
-from .events import (
+from src.modules.playbook.observer.base import ExecutionObserver
+from src.modules.playbook.observer.events import (
     PlaybookStartEvent, PlaybookEndEvent,
     PhaseStartEvent, PhaseEndEvent,
     StepStartEvent, StepEndEvent,

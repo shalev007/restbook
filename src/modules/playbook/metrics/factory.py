@@ -1,10 +1,10 @@
 from typing import Dict, Type
 
-from ..playbook.config import MetricsConfig, MetricsCollectorType
-from .base import MetricsCollector
-from .json import JsonMetricsCollector
-from .prometheus import PrometheusMetricsCollector
-from .console import ConsoleMetricsCollector
+from src.modules.playbook.config import MetricsConfig, MetricsCollectorType
+from src.modules.playbook.metrics.base import MetricsCollector
+from src.modules.playbook.metrics.json import JsonMetricsCollector
+from src.modules.playbook.metrics.prometheus import PrometheusMetricsCollector
+from src.modules.playbook.metrics.console import ConsoleMetricsCollector
 
 def create_metrics_collector(config: MetricsConfig) -> MetricsCollector:
     """Create a metrics collector based on the configuration.
