@@ -3,27 +3,23 @@ import hashlib
 import os
 from typing import Dict, Any, Optional, List, Union
 import asyncio
-import jq  # type: ignore
-from datetime import datetime
 import uuid
 
 from src.modules.session.session import Session
 
 from .config import (
-    AuthType, PlaybookConfig, PhaseConfig, StepConfig, StoreConfig, 
+    AuthType, PlaybookConfig, StepConfig, StoreConfig, 
     RequestConfig, SessionConfig, AuthConfig, AuthCredentials, RetryConfig
 )
 from .validator import PlaybookYamlValidator
 from .template_renderer import TemplateRenderer
 from .checkpoint import CheckpointStore, CheckpointData, create_checkpoint_store
 from .variables import VariableManager
-from .metrics import MetricsManager
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
 from ..request.resilient_http_client import RequestParams, ResilientHttpClient, ResilientHttpClientConfig
 from ..request.circuit_breaker import CircuitBreaker
 from ..metrics import (
-    RequestMetrics, StepMetrics, PhaseMetrics, PlaybookMetrics,
     create_metrics_collector
 )
 from .observer import (
@@ -513,7 +509,8 @@ class Playbook:
         self._notify_observers(RequestStartEvent(
             step_id=step_context_id,
             method=step.request.method.value,
-            endpoint=step.request.endpoint
+            endpoint=step.request.endpoint,
+            request_uuid=client.get_request_uuid()
         ))
         
         try:
@@ -551,6 +548,7 @@ class Playbook:
                 self._notify_observers(RequestEndEvent(
                     method=step.request.method.value,
                     endpoint=step.request.endpoint,
+                    request_uuid=metadata.request_uuid,
                     status_code=metadata.status_code or 0,
                     success=metadata.success or False,
                     error=metadata.errors[-1] if metadata.errors else None,
@@ -606,10 +604,10 @@ class Playbook:
                     observer.on_step_end(event, end_step_id)
             elif isinstance(event, RequestStartEvent):
                 # Generate new request context ID
-                request_id = str(uuid.uuid4())
-                self._request_context_ids[event.endpoint] = request_id
+                request_id = str(event.request_uuid)
+                self._request_context_ids[event.request_uuid] = request_id
                 observer.on_request_start(event, request_id)
             elif isinstance(event, RequestEndEvent):
-                end_request_id: Optional[str] = self._request_context_ids.get(event.endpoint)
+                end_request_id: Optional[str] = self._request_context_ids.get(event.request_uuid)
                 if end_request_id:
                     observer.on_request_end(event, end_request_id)

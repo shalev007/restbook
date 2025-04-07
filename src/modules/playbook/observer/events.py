@@ -73,16 +73,17 @@ class StepEndEvent(StepEvent):
 
 class RequestStartEvent(RequestEvent):
     """Event emitted when a request starts execution."""
-    def __init__(self, step_id: str, method: str, endpoint: str, timestamp: Optional[datetime] = None):
+    def __init__(self, step_id: str, method: str, endpoint: str, request_uuid: str, timestamp: Optional[datetime] = None):
         super().__init__(method, endpoint, timestamp)
         self.step_id = step_id
-
+        self.request_uuid = request_uuid
 class RequestEndEvent(RequestEvent):
     """Event emitted when a request ends execution."""
     def __init__(
         self,
         method: str,
         endpoint: str,
+        request_uuid: str,
         status_code: int,
         success: bool,
         error: Optional[str],
@@ -98,3 +99,4 @@ class RequestEndEvent(RequestEvent):
         self.errors = errors
         self.request_size_bytes = request_size_bytes
         self.response_size_bytes = response_size_bytes 
+        self.request_uuid = request_uuid

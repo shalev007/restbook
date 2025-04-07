@@ -1,13 +1,9 @@
 """Metrics observer implementation."""
 from datetime import datetime
-from typing import Dict, Any, Optional, List
-import uuid
+from typing import Dict, Any, Optional, List, Set
+from dataclasses import dataclass, field
 
 from ...metrics.base import MetricsCollector
-from ..metrics.metrics_manager import (
-    RequestCounters, ResourceUsageTracker,
-    PlaybookContext, PhaseContext, StepContext, RequestContext
-)
 from ...metrics.base import (
     RequestMetrics, StepMetrics, PhaseMetrics, PlaybookMetrics
 )
@@ -19,6 +15,126 @@ from .events import (
     RequestStartEvent, RequestEndEvent
 )
 
+
+@dataclass
+class RequestCounters:
+    """Tracks request-related counts."""
+    total: int = 0
+    successful: int = 0
+    failed: int = 0
+    total_request_size: int = 0
+    total_response_size: int = 0
+    total_variable_size: int = 0
+
+@dataclass
+class ResourceUsageTracker:
+    """Tracks resource usage metrics."""
+    peak_memory: int = 0
+    cpu_measurements: List[float] = field(default_factory=list)
+    
+    def update_memory(self, current: Optional[int]) -> None:
+        """Update peak memory usage."""
+        if current is not None:
+            self.peak_memory = max(self.peak_memory, current)
+            
+    def add_cpu_measurement(self, cpu: Optional[float]) -> None:
+        """Add a CPU measurement."""
+        if cpu is not None:
+            self.cpu_measurements.append(cpu)
+            
+    def get_average_cpu(self) -> Optional[float]:
+        """Calculate average CPU usage."""
+        return (sum(self.cpu_measurements) / len(self.cpu_measurements)
+                if self.cpu_measurements else None)
+
+@dataclass
+class PlaybookContext:
+    """Tracks playbook-level context."""
+    start_time: datetime
+    initial_memory: int = 0
+
+@dataclass
+class PhaseContext:
+    """Tracks phase-level context."""
+    id: str
+    name: str
+    start_time: datetime
+    step_ids: Set[str] = field(default_factory=set)
+    initial_memory: int = 0
+    initial_cpu: float = 0
+
+@dataclass
+class StepContext:
+    """Tracks step-level context."""
+    id: str
+    step_index: int
+    session: str
+    start_time: datetime
+    phase_id: str
+    request_ids: Set[str] = field(default_factory=set)
+    initial_memory: int = 0
+    initial_cpu: float = 0
+
+@dataclass
+class RequestContext:
+    """Tracks request-level context."""
+    id: str
+    method: str
+    endpoint: str
+    start_time: datetime
+    step_id: str
+    initial_memory: int = 0
+    initial_cpu: float = 0
+
+    def end(self, 
+            end_time: datetime,
+            status_code: int,
+            success: bool,
+            error: Optional[str] = None,
+            errors: Optional[List[str]] = None,
+            request_size_bytes: Optional[int] = None,
+            response_size_bytes: Optional[int] = None,
+            memory_after: Optional[int] = None,
+            cpu_after: Optional[float] = None) -> RequestMetrics:
+        """Create RequestMetrics from this context."""
+        duration_ms = (end_time - self.start_time).total_seconds() * 1000
+        
+        memory_usage = (
+            memory_after - self.initial_memory 
+            if self.initial_memory is not None and memory_after is not None 
+            else None
+        )
+        
+        cpu_usage = (
+            max(0, cpu_after - self.initial_cpu) 
+            if self.initial_cpu is not None and cpu_after is not None 
+            else None
+        )
+        
+        # Convert step_id to step number if available
+        step_number = None
+        if self.step_id:
+            try:
+                step_number = int(self.step_id.split('-')[-1])
+            except (ValueError, IndexError):
+                pass
+        
+        return RequestMetrics(
+            method=self.method,
+            endpoint=self.endpoint,
+            start_time=self.start_time,
+            end_time=end_time,
+            status_code=status_code,
+            duration_ms=duration_ms,
+            success=success,
+            error=error,
+            errors=errors or [],
+            request_size_bytes=request_size_bytes,
+            response_size_bytes=response_size_bytes,
+            memory_usage_bytes=memory_usage,
+            cpu_percent=cpu_usage,
+            step=step_number
+        )
 class MetricsObserver(ExecutionObserver):
     """Metrics-specific implementation of execution observer."""
     
