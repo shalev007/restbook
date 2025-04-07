@@ -53,7 +53,9 @@ class PhaseEndEvent(PhaseEvent):
 
 class StepStartEvent(StepEvent):
     """Event emitted when a step starts execution."""
-    pass
+    def __init__(self, phase_context_id: str, step_index: int, session: str, timestamp: Optional[datetime] = None):
+        super().__init__(step_index, session, timestamp)
+        self.phase_context_id = phase_context_id
 
 class StepEndEvent(StepEvent):
     """Event emitted when a step ends execution."""
@@ -71,7 +73,9 @@ class StepEndEvent(StepEvent):
 
 class RequestStartEvent(RequestEvent):
     """Event emitted when a request starts execution."""
-    pass
+    def __init__(self, step_id: str, method: str, endpoint: str, timestamp: Optional[datetime] = None):
+        super().__init__(method, endpoint, timestamp)
+        self.step_id = step_id
 
 class RequestEndEvent(RequestEvent):
     """Event emitted when a request ends execution."""

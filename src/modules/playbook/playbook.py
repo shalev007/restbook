@@ -282,6 +282,7 @@ class Playbook:
                 
                 # Start metrics collection for the phase
                 self._notify_observers(PhaseStartEvent(phase.name))
+                phase_context_id = self._phase_context_ids[phase.name]
                 
                 try:
                     if phase.parallel:
@@ -294,7 +295,7 @@ class Playbook:
                         
                         # Execute steps in parallel
                         tasks = [
-                            self._execute_step(step, step_index, session_store)
+                            self._execute_step(step, phase_context_id,step_index, session_store)
                             for step_index, step in enumerate(phase.steps)
                         ]
                         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -314,7 +315,7 @@ class Playbook:
                                 self.logger.log_info(f"Skipping step {step_index} (already completed)")
                                 continue
                                 
-                            await self._execute_step(step, step_index, session_store)
+                            await self._execute_step(step, phase_context_id, step_index, session_store)
                             
                             # Save checkpoint after each step
                             await self._save_checkpoint(phase_index, step_index)
@@ -352,7 +353,7 @@ class Playbook:
             self._step_context_ids.clear()
             self._request_context_ids.clear()
 
-    async def _execute_step(self, step: StepConfig, step_index: int, session_store: SessionStore) -> None:
+    async def _execute_step(self, step: StepConfig, phase_context_id: str, step_index: int, session_store: SessionStore) -> None:
         """
         Execute a single step of the playbook.
         
@@ -362,7 +363,8 @@ class Playbook:
             step_index: Index of the step in the phase
         """
         # Start metrics collection for the step
-        self._notify_observers(StepStartEvent(step_index, step.session))
+        self._notify_observers(StepStartEvent(phase_context_id, step_index, step.session))
+        step_context_id = self._step_context_ids[str(step_index)]
         step_rendered_store = []
         try:
             if step.iterate:
@@ -396,7 +398,7 @@ class Playbook:
                         rendered_step.store = None
                     
                     # Add task for this iteration
-                    tasks.append(self._execute_single_step(rendered_step, session_store))
+                    tasks.append(self._execute_single_step(rendered_step, step_context_id, session_store))
 
                 # Execute iterations based on parallel flag
                 if step.parallel:
@@ -418,7 +420,7 @@ class Playbook:
                 else:
                     rendered_step.store = None
                 # Execute step directly if no iteration is configured
-                await self._execute_single_step(rendered_step, session_store)
+                await self._execute_single_step(rendered_step, step_context_id, session_store)
 
         except Exception as e:
             if step.on_error == "ignore":
@@ -442,12 +444,13 @@ class Playbook:
             store_vars=store_vars
         ))
 
-    async def _execute_single_step(self, step: StepConfig, session_store: SessionStore) -> None:
+    async def _execute_single_step(self, step: StepConfig, step_context_id: str, session_store: SessionStore) -> None:
         """
         Execute a single step without iteration.
         
         Args:
             step: The step configuration
+            step_context_id: The context ID for the step
             session_store: The session store for retrieving sessions
         """
         # Get session for this step
@@ -508,6 +511,7 @@ class Playbook:
 
         # Start metrics collection for the request
         self._notify_observers(RequestStartEvent(
+            step_id=step_context_id,
             method=step.request.method.value,
             endpoint=step.request.endpoint
         ))

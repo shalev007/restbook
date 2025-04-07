@@ -125,7 +125,7 @@ class MetricsObserver(ExecutionObserver):
             step_index=event.step_index,
             session=event.session,
             start_time=event.timestamp,
-            phase_id="",  # This will be set by the playbook
+            phase_id=event.phase_context_id,
             initial_memory=self.get_memory_usage(),
             initial_cpu=self.get_cpu_usage()
         )
@@ -134,6 +134,7 @@ class MetricsObserver(ExecutionObserver):
     def on_step_end(self, event: StepEndEvent, context_id: str) -> None:
         """Handle step end event."""
         step = self._active_steps.pop(context_id)
+        phase = self._active_phases[step.phase_id]
         memory_after = self.get_memory_usage()
         cpu_after = self.get_cpu_usage()
         
@@ -151,7 +152,9 @@ class MetricsObserver(ExecutionObserver):
             store_vars=list(event.store_vars.keys()),
             variable_sizes=variable_sizes,
             memory_usage_bytes=memory_after - step.initial_memory,
-            cpu_percent=max(0, cpu_after - step.initial_cpu)
+            cpu_percent=max(0, cpu_after - step.initial_cpu),
+            step=step.step_index,
+            phase=phase.name
         )
         
         self.collector.record_step(metrics)
@@ -163,7 +166,7 @@ class MetricsObserver(ExecutionObserver):
             method=event.method,
             endpoint=event.endpoint,
             start_time=event.timestamp,
-            step_id="",  # This will be set by the playbook
+            step_id=event.step_id,
             initial_memory=self.get_memory_usage(),
             initial_cpu=self.get_cpu_usage()
         )
@@ -174,6 +177,8 @@ class MetricsObserver(ExecutionObserver):
         request = self._active_requests.pop(context_id)
         memory_after = self.get_memory_usage()
         cpu_after = self.get_cpu_usage()
+        step = self._active_steps[request.step_id]
+        phase = self._active_phases[step.phase_id]
         
         # Create metrics
         metrics = RequestMetrics(
@@ -189,7 +194,9 @@ class MetricsObserver(ExecutionObserver):
             request_size_bytes=event.request_size_bytes,
             response_size_bytes=event.response_size_bytes,
             memory_usage_bytes=memory_after - request.initial_memory,
-            cpu_percent=max(0, cpu_after - request.initial_cpu)
+            cpu_percent=max(0, cpu_after - request.initial_cpu),
+            step=step.step_index,
+            phase=phase.name
         )
         
         # Update resource usage

@@ -36,7 +36,7 @@ class StepMetrics:
     memory_usage_bytes: Optional[int] = None  # Memory usage during step in bytes
     cpu_percent: Optional[float] = None  # CPU usage during step as percentage
     phase: Optional[str] = None
-
+    step: Optional[int] = None
 @dataclass
 class PhaseMetrics:
     """Metrics for a single phase."""
