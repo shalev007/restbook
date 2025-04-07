@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional, List, Union
 import asyncio
 import jq  # type: ignore
 from datetime import datetime
+import uuid
 
 from src.modules.session.session import Session
 
@@ -25,6 +26,14 @@ from ..metrics import (
     RequestMetrics, StepMetrics, PhaseMetrics, PlaybookMetrics,
     create_metrics_collector
 )
+from .observer import (
+    ExecutionObserver,
+    PlaybookStartEvent, PlaybookEndEvent,
+    PhaseStartEvent, PhaseEndEvent,
+    StepStartEvent, StepEndEvent,
+    RequestStartEvent, RequestEndEvent
+)
+from .observer.metrics_observer import MetricsObserver
 
 class Playbook:
     """Represents a playbook that can be executed."""
@@ -52,12 +61,18 @@ class Playbook:
             self.checkpoint_store = create_checkpoint_store(self.config.incremental)
             logger.log_info(f"Incremental execution enabled. Content hash: {self.content_hash}")
             
-        # Initialize metrics manager if enabled
-        self.metrics_manager: Optional[MetricsManager] = None
+        # Initialize observers
+        self.observers: List[ExecutionObserver] = []
         if self.config.metrics and self.config.metrics.enabled:
             metrics_collector = create_metrics_collector(self.config.metrics)
-            self.metrics_manager = MetricsManager(metrics_collector)
+            self.observers.append(MetricsObserver(metrics_collector))
             logger.log_info(f"Metrics collection enabled with collector type: {self.config.metrics.collector}")
+            
+        # Initialize context tracking
+        self._playbook_context_id: Optional[str] = None
+        self._phase_context_ids: Dict[str, str] = {}  # phase_name -> context_id
+        self._step_context_ids: Dict[str, str] = {}  # step_index -> context_id
+        self._request_context_ids: Dict[str, str] = {}  # endpoint -> context_id
 
     def _generate_content_hash(self) -> str:
         """Generate a hash of the playbook content."""
@@ -242,8 +257,7 @@ class Playbook:
             aiohttp.ClientError: If any request fails
         """
         # Start metrics collection for the playbook
-        if self.metrics_manager:
-            self.metrics_manager.start_playbook()
+        self._notify_observers(PlaybookStartEvent())
         
         try:
             # Check for checkpoint if incremental is enabled
@@ -267,9 +281,7 @@ class Playbook:
                 self.logger.log_info(f"Executing phase {phase_index}: {phase.name}")
                 
                 # Start metrics collection for the phase
-                phase_context_id = (
-                    self.metrics_manager.start_phase(phase.name) if self.metrics_manager else None
-                )
+                self._notify_observers(PhaseStartEvent(phase.name))
                 
                 try:
                     if phase.parallel:
@@ -282,7 +294,7 @@ class Playbook:
                         
                         # Execute steps in parallel
                         tasks = [
-                            self._execute_step(step, step_index, session_store, phase_context_id)
+                            self._execute_step(step, step_index, session_store)
                             for step_index, step in enumerate(phase.steps)
                         ]
                         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -302,28 +314,19 @@ class Playbook:
                                 self.logger.log_info(f"Skipping step {step_index} (already completed)")
                                 continue
                                 
-                            await self._execute_step(step, step_index, session_store, phase_context_id)
+                            await self._execute_step(step, step_index, session_store)
                             
                             # Save checkpoint after each step
                             await self._save_checkpoint(phase_index, step_index)
                     
-                    # End metrics collection for the phase - the step metrics are now tracked internally by the MetricsManager
-                    if self.metrics_manager and phase_context_id:
-                        self.metrics_manager.end_phase(
-                            context_id=phase_context_id,
-                            parallel=bool(phase.parallel)
-                        )
+                    # End metrics collection for the phase
+                    self._notify_observers(PhaseEndEvent(phase.name, bool(phase.parallel)))
                 except Exception as e:
                     # Clean up the phase metrics context in case of error
-                    if self.metrics_manager and phase_context_id:
-                        # Try to end the phase metrics but continue if it fails
-                        try:
-                            self.metrics_manager.end_phase(
-                                context_id=phase_context_id,
-                                parallel=bool(phase.parallel)
-                            )
-                        except Exception:
-                            pass
+                    try:
+                        self._notify_observers(PhaseEndEvent(phase.name, bool(phase.parallel)))
+                    except Exception:
+                        pass
                     raise
                 
                 # Clear checkpoint after successful execution
@@ -336,24 +339,30 @@ class Playbook:
             # Clean up temporary sessions
             self._temp_sessions.clear()
             
-            
             # Finalize playbook metrics
-            if self.metrics_manager:
-                self.metrics_manager.finalize_playbook()
-                self.metrics_manager.cleanup()
+            self._notify_observers(PlaybookEndEvent())
+            
+            # Clean up observers
+            for observer in self.observers:
+                observer.cleanup()
+                
+            # Clear context tracking
+            self._playbook_context_id = None
+            self._phase_context_ids.clear()
+            self._step_context_ids.clear()
+            self._request_context_ids.clear()
 
-    async def _execute_step(self, step: StepConfig, step_index: int, session_store: SessionStore, phase_context_id: Optional[str] = None) -> None:
+    async def _execute_step(self, step: StepConfig, step_index: int, session_store: SessionStore) -> None:
         """
         Execute a single step of the playbook.
         
         Args:
             step: The step configuration to execute
             session_store: Session store for retrieving sessions
-            phase_context_id: Optional ID of the parent phase context
             step_index: Index of the step in the phase
         """
         # Start metrics collection for the step
-        step_context_id = self.metrics_manager.start_step(step_index, step.session, phase_context_id) if self.metrics_manager and phase_context_id else None
+        self._notify_observers(StepStartEvent(step_index, step.session))
         step_rendered_store = []
         try:
             if step.iterate:
@@ -387,7 +396,7 @@ class Playbook:
                         rendered_step.store = None
                     
                     # Add task for this iteration
-                    tasks.append(self._execute_single_step(rendered_step, session_store, step_context_id))
+                    tasks.append(self._execute_single_step(rendered_step, session_store))
 
                 # Execute iterations based on parallel flag
                 if step.parallel:
@@ -409,40 +418,37 @@ class Playbook:
                 else:
                     rendered_step.store = None
                 # Execute step directly if no iteration is configured
-                await self._execute_single_step(rendered_step, session_store, step_context_id)
+                await self._execute_single_step(rendered_step, session_store)
 
         except Exception as e:
             if step.on_error == "ignore":
                 self.logger.log_info(f"Step failed but continuing: {str(e)}")
-                if self.metrics_manager and step_context_id:
-                    self.metrics_manager.increment_request_count(step_context_id, False)
             else:
                 raise
         
         # End metrics collection for the step
-        if self.metrics_manager and step_context_id:
-            # Create dictionary of variable names to values
-            store_vars = {}
-            if step_rendered_store:
-                for store_config in step_rendered_store:
-                    var_name = store_config.var
-                    if self.variables.has(var_name):
-                        store_vars[var_name] = self.variables.get(var_name)
-            
-            self.metrics_manager.end_step(
-                context_id=step_context_id,
-                retry_count=0,  # This would need to be tracked in the request execution
-                store_vars=store_vars
-            )
+        # Create dictionary of variable names to values
+        store_vars = {}
+        if step_rendered_store:
+            for store_config in step_rendered_store:
+                var_name = store_config.var
+                if self.variables.has(var_name):
+                    store_vars[var_name] = self.variables.get(var_name)
+        
+        self._notify_observers(StepEndEvent(
+            step_index=step_index,
+            session=step.session,
+            retry_count=0,  # This would need to be tracked in the request execution
+            store_vars=store_vars
+        ))
 
-    async def _execute_single_step(self, step: StepConfig, session_store: SessionStore, step_context_id: Optional[str] = None) -> None:
+    async def _execute_single_step(self, step: StepConfig, session_store: SessionStore) -> None:
         """
         Execute a single step without iteration.
         
         Args:
             step: The step configuration
             session_store: The session store for retrieving sessions
-            step_context_id: Optional ID of the parent step context for metrics tracking
         """
         # Get session for this step
         if step.session in self._temp_sessions:
@@ -501,13 +507,10 @@ class Playbook:
         )
 
         # Start metrics collection for the request
-        request_context_id = None
-        if self.metrics_manager and step_context_id:
-            request_context_id = self.metrics_manager.start_request(
-                method=step.request.method.value,
-                endpoint=step.request.endpoint,
-                step_context_id=step_context_id
-            )
+        self._notify_observers(RequestStartEvent(
+            method=step.request.method.value,
+            endpoint=step.request.endpoint
+        ))
         
         try:
             # Execute request
@@ -539,18 +542,18 @@ class Playbook:
             await client.close()
             
             # Get request metadata and end metrics collection
-            if self.metrics_manager and request_context_id:
-                metadata = client.get_last_request_execution_metadata()
-                if metadata:
-                    self.metrics_manager.end_request(
-                        context_id=request_context_id,
-                        status_code=metadata.status_code or 0,
-                        success=metadata.success or False,
-                        error=metadata.errors[-1] if metadata.errors else None,
-                        errors=metadata.errors,
-                        request_size_bytes=metadata.request_size_bytes,
-                        response_size_bytes=metadata.response_size_bytes
-                    )
+            metadata = client.get_last_request_execution_metadata()
+            if metadata:
+                self._notify_observers(RequestEndEvent(
+                    method=step.request.method.value,
+                    endpoint=step.request.endpoint,
+                    status_code=metadata.status_code or 0,
+                    success=metadata.success or False,
+                    error=metadata.errors[-1] if metadata.errors else None,
+                    errors=metadata.errors,
+                    request_size_bytes=metadata.request_size_bytes,
+                    response_size_bytes=metadata.response_size_bytes
+                ))
 
     def _convert_to_executor_config(self, playbook_config: RequestConfig) -> RequestParams:
         """Convert a playbook request config to an executor request config.
@@ -569,3 +572,40 @@ class Playbook:
             data=playbook_config.data,
             params=playbook_config.params
         )
+
+    def _notify_observers(self, event: Any) -> None:
+        """Notify all observers of an event."""
+        for observer in self.observers:
+            if isinstance(event, PlaybookStartEvent):
+                # Generate new playbook context ID
+                self._playbook_context_id = str(uuid.uuid4())
+                observer.on_playbook_start(event, self._playbook_context_id)
+            elif isinstance(event, PlaybookEndEvent):
+                if self._playbook_context_id:
+                    observer.on_playbook_end(event, self._playbook_context_id)
+            elif isinstance(event, PhaseStartEvent):
+                # Generate new phase context ID
+                phase_id = str(uuid.uuid4())
+                self._phase_context_ids[event.phase_name] = phase_id
+                observer.on_phase_start(event, phase_id)
+            elif isinstance(event, PhaseEndEvent):
+                if event.phase_name in self._phase_context_ids:
+                    observer.on_phase_end(event, self._phase_context_ids[event.phase_name])
+            elif isinstance(event, StepStartEvent):
+                # Generate new step context ID
+                step_id = str(uuid.uuid4())
+                self._step_context_ids[str(event.step_index)] = step_id
+                observer.on_step_start(event, step_id)
+            elif isinstance(event, StepEndEvent):
+                end_step_id: Optional[str] = self._step_context_ids.get(str(event.step_index))
+                if end_step_id:
+                    observer.on_step_end(event, end_step_id)
+            elif isinstance(event, RequestStartEvent):
+                # Generate new request context ID
+                request_id = str(uuid.uuid4())
+                self._request_context_ids[event.endpoint] = request_id
+                observer.on_request_start(event, request_id)
+            elif isinstance(event, RequestEndEvent):
+                end_request_id: Optional[str] = self._request_context_ids.get(event.endpoint)
+                if end_request_id:
+                    observer.on_request_end(event, end_request_id)
