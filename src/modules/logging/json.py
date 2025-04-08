@@ -6,40 +6,57 @@ from .base import BaseLogger
 class JsonLogger(BaseLogger):
     """Logger that outputs JSON for machine parsing."""
     
+    def __init__(self):
+        super().__init__()
+        # Configure loguru for JSON output
+        self.logger.configure(
+            handlers=[{
+                "sink": sys.stdout,
+                "serialize": True,  # JSON output
+                "format": "{time} | {level} | {message}"
+            }]
+        )
+    
     def log_step(self, step_number: int, method: str, endpoint: str):
-        print(json.dumps({
+        self.logger.info("", extra={
             "type": "step",
             "step_number": step_number,
             "method": method,
             "endpoint": endpoint
-        }))
+        })
 
     def log_status(self, status_code: int):
-        print(json.dumps({
+        self.logger.info("", extra={
             "type": "status",
             "code": status_code
-        }))
+        })
 
     def log_headers(self, headers: dict):
-        print(json.dumps({
+        self.logger.info("", extra={
             "type": "headers",
             "headers": headers
-        }))
+        })
 
     def log_body(self, body: str):
-        print(json.dumps({
+        self.logger.info("", extra={
             "type": "body",
             "content": body
-        }))
+        })
 
     def log_error(self, message: str):
-        print(json.dumps({
+        self.logger.error("", extra={
             "type": "error",
             "message": message
-        }), file=sys.stderr)
+        })
+
+    def log_warning(self, message: str):
+        self.logger.warning("", extra={
+            "type": "warning",
+            "message": message
+        })
 
     def log_info(self, message: str):
-        print(json.dumps({
+        self.logger.info("", extra={
             "type": "info",
             "message": message
-        })) 
+        }) 
