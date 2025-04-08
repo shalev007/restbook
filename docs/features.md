@@ -105,6 +105,47 @@ steps:
 ```
 {% endraw %}
 
+## Logging
+
+RestBook provides flexible logging capabilities with multiple output formats and configurable log levels:
+
+### Output Formats
+
+Choose from three different logging formats:
+
+1. **Colorful** (default): Human-readable output with color coding for different log levels
+2. **Plain**: Simple text output suitable for CI/CD environments
+3. **JSON**: Machine-readable output for programmatic processing
+
+### Log Levels
+
+Control the verbosity of logging with different log levels:
+
+- **DEBUG**: Detailed information for debugging
+- **INFO**: General operational information
+- **WARNING**: Warning messages for potential issues
+- **ERROR**: Error messages for failed operations
+- **CRITICAL**: Critical errors that may prevent execution
+
+### Configuration
+
+Configure logging through command line options or environment variables:
+
+```bash
+# Command line options
+restbook --output json --log-level DEBUG
+
+# Environment variables
+RESTBOOK_OUTPUT=json RESTBOOK_LOG_LEVEL=DEBUG restbook
+```
+
+The logging system provides detailed information about:
+- Step execution progress
+- Request/response details
+- Variable state changes
+- Error conditions and warnings
+- Performance metrics
+
 ### List Appending
 
 Append to list variables across multiple steps:
