@@ -71,8 +71,7 @@ class RunCommand:
         current_time = datetime.now()
         if current_time > next_run:
             time_behind = (current_time - next_run).total_seconds()
-            # TODO: change to warning once we have a warning logger
-            self.logger.log_info(
+            self.logger.log_warning(
                 f"Execution is running {time_behind:.2f} seconds behind schedule. "
                 "Consider adjusting the cron schedule to allow more time between runs."
             )

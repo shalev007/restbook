@@ -1,8 +1,13 @@
 from abc import ABC, abstractmethod
+from loguru import logger
 
 
 class BaseLogger(ABC):
     """Abstract base class for loggers."""
+    
+    def __init__(self, log_level: str = "INFO"):
+        self.logger = logger
+        self.log_level = log_level
     
     @abstractmethod
     def log_step(self, step_number: int, method: str, endpoint: str):
@@ -30,6 +35,16 @@ class BaseLogger(ABC):
         pass
 
     @abstractmethod
+    def log_warning(self, message: str):
+        """Log a warning message."""
+        pass
+
+    @abstractmethod
     def log_info(self, message: str):
         """Log an info message."""
+        pass
+
+    @abstractmethod
+    def log_debug(self, message: str):
+        """Log a debug message."""
         pass 

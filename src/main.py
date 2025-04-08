@@ -20,10 +20,15 @@ pass_context = click.make_pass_decorator(RestbookContext, ensure=True)
               default='colorful',
               help='Output format (colorful for CLI, plain for CI/file, json for machine parsing)',
               envvar='RESTBOOK_OUTPUT')
+@click.option('--log-level', '-l',
+              type=click.Choice(['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']),
+              default='INFO',
+              help='Set the logging level',
+              envvar='RESTBOOK_LOG_LEVEL')
 @pass_context
-def cli(ctx, output):
+def cli(ctx, output, log_level):
     """RestBook CLI Tool: Declarative API interactions."""
-    ctx.logger = create_logger(output)
+    ctx.logger = create_logger(output, log_level)
 
 # Add commands
 cli.add_command(create_session_commands())

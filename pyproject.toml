@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "restbook"
-version = "0.3.6"
+version = "0.3.7"
 description = "simple rest api for testing"
 authors = ["Shalev Avhar <shalev1994avhar@gmail.com>"]
 packages = [
@@ -20,6 +20,7 @@ prompt-toolkit = "^3.0.50"
 prometheus-client = "^0.21.1"
 psutil = "^7.0.0"
 croniter = "^6.0.0"
+loguru = "^0.7.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.5"
