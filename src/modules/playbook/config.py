@@ -127,7 +127,38 @@ class IncrementalConfig(BaseModel):
             raise ValueError("file_path is required when store type is 'file'")
         return self
 
+class MetricsCollectorType(str, Enum):
+    JSON = "json"
+    PROMETHEUS = "prometheus"
+    CONSOLE = "console"
+
+class MetricsConfig(BaseModel):
+    enabled: bool = False
+    collector: MetricsCollectorType = MetricsCollectorType.JSON
+    # JSON collector specific config
+    output_file: Optional[str] = None
+    # Prometheus collector specific config
+    push_gateway: Optional[str] = None
+    job_name: str = "restbook"
+    # Console collector specific config
+    verbosity: str = "info"  # debug, info, warning
+
+    @model_validator(mode='after')
+    def validate_collector_config(self) -> 'MetricsConfig':
+        """Validate collector-specific configuration."""
+        if not self.enabled:
+            return self
+            
+        if self.collector == MetricsCollectorType.JSON and not self.output_file:
+            raise ValueError("output_file is required when using JSON collector")
+            
+        if self.collector == MetricsCollectorType.PROMETHEUS and not self.push_gateway:
+            raise ValueError("push_gateway is required when using Prometheus collector")
+            
+        return self
+
 class PlaybookConfig(BaseModel):
     sessions: Optional[Dict[str, SessionConfig]] = None  # Make sessions optional
     phases: List[PhaseConfig]
     incremental: Optional[IncrementalConfig] = IncrementalConfig()  # Default to disabled
+    metrics: Optional[MetricsConfig] = MetricsConfig()  # Default to disabled

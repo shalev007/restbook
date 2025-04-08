@@ -1,8 +1,9 @@
 ---
 layout: default
 title: Examples
-nav_order: 6
-description: "Explore practical examples of RestBook playbooks for common use cases"
+nav_order: 5
+parent: Documentation
+description: "Explore practical examples of RestBook playbooks"
 permalink: /examples/
 ---
 

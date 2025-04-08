@@ -1,8 +1,9 @@
 ---
 layout: default
 title: Features
-nav_order: 4
-description: "Explore RestBook's powerful features for API workflow automation"
+nav_order: 2
+parent: Documentation
+description: "Explore the powerful features of RestBook"
 permalink: /features/
 ---
 
@@ -186,6 +187,97 @@ RestBook is designed to work seamlessly in CI/CD environments:
 - Configurable logging levels
 - Exit codes for pipeline integration
 - Checkpoint support for long-running workflows
+
+## Resilient HTTP Client
+
+RestBook includes a resilient HTTP client that handles retries, circuit breaking, and rate limiting. This ensures that your API requests are reliable even in the face of transient failures.
+
+### Retry Configuration
+
+You can configure retry behavior at both the session and step levels:
+
+```yaml
+# Session-level retry configuration
+sessions:
+  api:
+    base_url: "https://api.example.com"
+    retry:
+      max_retries: 3
+      backoff_factor: 1.0
+      max_delay: 10
+
+# Step-level retry configuration (overrides session defaults)
+phases:
+  - name: "Example Phase"
+    steps:
+      - session: api
+        request:
+          method: GET
+          endpoint: "/users"
+        retry:
+          max_retries: 5
+          backoff_factor: 0.5
+```
+
+### Circuit Breaker
+
+Circuit breakers prevent cascading failures by temporarily stopping requests to failing services:
+
+```yaml
+sessions:
+  api:
+    base_url: "https://api.example.com"
+    retry:
+      circuit_breaker:
+        threshold: 5
+        reset: 60
+        jitter: 0.1
+```
+
+### Rate Limiting
+
+Rate limiting helps prevent overwhelming APIs:
+
+```yaml
+sessions:
+  api:
+    base_url: "https://api.example.com"
+    retry:
+      rate_limit:
+        use_server_retry_delay: true
+        retry_header: "Retry-After"
+```
+
+## Metrics Collection
+
+RestBook provides a comprehensive metrics collection system that allows you to monitor and analyze the performance and behavior of your playbooks.
+
+### Metrics Collectors
+
+RestBook supports three types of metrics collectors:
+
+1. **JSON Collector**: Saves metrics to a JSON file for debugging and CI/CD pipelines
+2. **Prometheus Collector**: Pushes metrics to a Prometheus Pushgateway for production monitoring
+3. **Console Collector**: Outputs metrics to the console in real-time for local development
+
+### Resource Metrics
+
+RestBook collects detailed resource usage metrics to help you optimize your playbooks:
+
+- **Memory Usage**: Track memory consumption at request, step, phase, and playbook levels
+- **CPU Utilization**: Monitor CPU usage as a percentage during execution
+- **Data Size Metrics**: Measure the size of request/response payloads and stored variables
+
+### Configuration Example
+
+```yaml
+metrics:
+  enabled: true
+  collector: json
+  output_file: "metrics_output.json"
+```
+
+For more details, see the [Metrics documentation](./metrics.md).
 
 ## Next Steps
 

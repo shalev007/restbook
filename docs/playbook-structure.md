@@ -1,8 +1,9 @@
 ---
 layout: default
 title: Playbook Structure
-nav_order: 3
-description: "Learn about the structure and components of RestBook playbooks"
+nav_order: 1
+parent: Documentation
+description: "Understand the structure and components of RestBook playbooks"
 permalink: /playbook-structure/
 ---
 

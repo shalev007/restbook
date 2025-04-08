@@ -1,8 +1,9 @@
 ---
 layout: default
 title: CI/CD Integration
-nav_order: 5
-description: "Learn how to integrate RestBook with your CI/CD pipelines"
+nav_order: 4
+parent: Documentation
+description: "Learn how to integrate RestBook with your CI/CD pipeline"
 permalink: /ci-cd/
 ---
 
