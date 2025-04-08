@@ -119,19 +119,21 @@ RestBook supports three types of metrics collectors:
 
 ## Resource Metrics
 
+> **⚠️ Important Notice**: The CPU and memory metrics are currently experimental and may not provide accurate measurements in all environments. We are working on improving these metrics in future releases. For production monitoring, we recommend using external system monitoring tools to track resource usage.
+
 RestBook collects detailed resource usage metrics at all levels of execution:
 
 ### Memory Usage
-- All memory measurements are in bytes
-- Tracks memory usage during requests, steps, and phases
-- Records peak memory usage for the entire playbook
-- Measures memory impact of stored variables
+- ~~All memory measurements are in bytes~~
+- ~~Tracks memory usage during requests, steps, and phases~~
+- ~~Records peak memory usage for the entire playbook~~
+- Measures memory impact of stored variables (through variable size tracking)
 
 ### CPU Usage
-- CPU usage is measured as a percentage (0-100)
-- All CPU measurements are guaranteed to be non-negative
-- Tracks CPU usage during requests, steps, and phases
-- Calculates average CPU usage for the playbook
+- ~~CPU usage is measured as a percentage (0-100)~~
+- ~~All CPU measurements are guaranteed to be non-negative~~
+- ~~Tracks CPU usage during requests, steps, and phases~~
+- ~~Calculates average CPU usage for the playbook~~
 
 ### Data Size Metrics
 - Request and response sizes are measured in bytes
