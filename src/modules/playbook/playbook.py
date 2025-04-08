@@ -577,36 +577,55 @@ class Playbook:
 
     def _notify_observers(self, event: Any) -> None:
         """Notify all observers of an event."""
+        phase_id = None
+        step_id = None
+        request_id = None
+        match event:
+            case PlaybookStartEvent():
+                # Generate new playbook context ID
+                self._playbook_context_id = str(uuid.uuid4())
+            case PhaseStartEvent():
+                # Generate new phase context ID
+                phase_id = str(uuid.uuid4())
+                self._phase_context_ids[event.phase_name] = phase_id
+            case StepStartEvent():
+                # Generate new step context ID
+                step_id = str(uuid.uuid4())
+                self._step_context_ids[str(event.step_index)] = step_id
+            case RequestStartEvent():
+                # Generate new request context ID
+                request_id = str(uuid.uuid4())
+                self._request_context_ids[event.request_uuid] = request_id
+            case _:
+                pass
+
         for observer in self.observers:
             if isinstance(event, PlaybookStartEvent):
                 # Generate new playbook context ID
-                self._playbook_context_id = str(uuid.uuid4())
-                observer.on_playbook_start(event, self._playbook_context_id)
+                if self._playbook_context_id:
+                    observer.on_playbook_start(event, self._playbook_context_id)
             elif isinstance(event, PlaybookEndEvent):
                 if self._playbook_context_id:
                     observer.on_playbook_end(event, self._playbook_context_id)
             elif isinstance(event, PhaseStartEvent):
                 # Generate new phase context ID
-                phase_id = str(uuid.uuid4())
-                self._phase_context_ids[event.phase_name] = phase_id
-                observer.on_phase_start(event, phase_id)
+                if phase_id:
+                    observer.on_phase_start(event, phase_id)
             elif isinstance(event, PhaseEndEvent):
                 if event.phase_name in self._phase_context_ids:
                     observer.on_phase_end(event, self._phase_context_ids[event.phase_name])
             elif isinstance(event, StepStartEvent):
                 # Generate new step context ID
-                step_id = str(uuid.uuid4())
-                self._step_context_ids[str(event.step_index)] = step_id
-                observer.on_step_start(event, step_id)
+                if step_id:
+                    observer.on_step_start(event, step_id)
             elif isinstance(event, StepEndEvent):
                 end_step_id: Optional[str] = self._step_context_ids.get(str(event.step_index))
                 if end_step_id:
                     observer.on_step_end(event, end_step_id)
             elif isinstance(event, RequestStartEvent):
                 # Generate new request context ID
-                request_id = str(event.request_uuid)
-                self._request_context_ids[event.request_uuid] = request_id
-                observer.on_request_start(event, request_id)
+                if request_id:
+                    observer.on_request_start(event, request_id)
             elif isinstance(event, RequestEndEvent):
                 end_request_id: Optional[str] = self._request_context_ids.get(event.request_uuid)
                 if end_request_id:
