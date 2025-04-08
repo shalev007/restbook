@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 5s  # How often to scrape targets
+
+scrape_configs:
+  - job_name: 'restbook'
+    static_configs:
+      - targets: ['pushgateway:9091']
