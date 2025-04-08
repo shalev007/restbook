@@ -1,8 +1,9 @@
 ---
 layout: default
 title: Features
-nav_order: 4
-description: "Explore RestBook's powerful features for API workflow automation"
+nav_order: 2
+parent: Documentation
+description: "Explore the powerful features of RestBook"
 permalink: /features/
 ---
 

@@ -46,3 +46,9 @@ last_modified_date: true
 nav_order:
   - index.md
   - getting-started.md
+  - documentation:
+    - playbook-structure.md
+    - features.md
+    - metrics.md
+    - ci-cd.md
+    - examples.md

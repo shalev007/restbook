@@ -1,7 +1,8 @@
 ---
 layout: default
 title: Metrics Collection
-nav_order: 5
+nav_order: 3
+parent: Documentation
 description: "Learn how to collect and analyze metrics from your RestBook playbooks"
 permalink: /metrics/
 ---
