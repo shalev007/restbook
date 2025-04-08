@@ -5,14 +5,15 @@ from .base import BaseLogger
 class PlainLogger(BaseLogger):
     """Logger that outputs plain text, suitable for CI/file output."""
     
-    def __init__(self):
+    def __init__(self, log_level: str = "INFO"):
         super().__init__()
         # Configure loguru for plain output
         self.logger.configure(
             handlers=[{
                 "sink": sys.stdout,
                 "format": "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {message}",
-                "colorize": False
+                "colorize": False,
+                "level": log_level
             }]
         )
     
@@ -40,4 +41,7 @@ class PlainLogger(BaseLogger):
         self.logger.warning(message)
 
     def log_info(self, message: str):
-        self.logger.info(message) 
+        self.logger.info(message)
+
+    def log_debug(self, message: str):
+        self.logger.debug(message) 

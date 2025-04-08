@@ -6,14 +6,15 @@ from .base import BaseLogger
 class JsonLogger(BaseLogger):
     """Logger that outputs JSON for machine parsing."""
     
-    def __init__(self):
+    def __init__(self, log_level: str = "INFO"):
         super().__init__()
         # Configure loguru for JSON output
         self.logger.configure(
             handlers=[{
                 "sink": sys.stdout,
                 "serialize": True,  # JSON output
-                "format": "{time} | {level} | {message}"
+                "format": "{time} | {level} | {message}",
+                "level": log_level
             }]
         )
     
@@ -58,5 +59,11 @@ class JsonLogger(BaseLogger):
     def log_info(self, message: str):
         self.logger.info("", extra={
             "type": "info",
+            "message": message
+        })
+
+    def log_debug(self, message: str):
+        self.logger.debug("", extra={
+            "type": "debug",
             "message": message
         }) 

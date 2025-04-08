@@ -6,7 +6,7 @@ import sys
 class ColorfulLogger(BaseLogger):
     """Logger that outputs colorful text for CLI usage."""
     
-    def __init__(self):
+    def __init__(self, log_level: str = "INFO"):
         super().__init__()
         # Configure loguru for colored output
         self.logger.configure(
@@ -15,7 +15,8 @@ class ColorfulLogger(BaseLogger):
                 "colorize": True,
                 "format": "<cyan>{time:YYYY-MM-DD HH:mm:ss.SSS}</cyan> | "
                          "<level>{level: <8}</level> | "
-                         "<white>{message}</white>"
+                         "<white>{message}</white>",
+                "level": log_level
             }]
         )
     
@@ -54,4 +55,7 @@ class ColorfulLogger(BaseLogger):
         self.logger.warning(click.style(message, fg="yellow", bold=True))
 
     def log_info(self, message: str):
-        self.logger.info(click.style(message, fg="white")) 
+        self.logger.info(click.style(message, fg="white"))
+
+    def log_debug(self, message: str):
+        self.logger.debug(click.style(message, fg="blue")) 
