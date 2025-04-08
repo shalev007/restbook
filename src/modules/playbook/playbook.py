@@ -420,7 +420,7 @@ class Playbook:
 
         except Exception as e:
             if step.on_error == "ignore":
-                self.logger.log_info(f"Step failed but continuing: {str(e)}")
+                self.logger.log_warning(f"Step failed but continuing: {str(e)}")
             else:
                 raise
         
