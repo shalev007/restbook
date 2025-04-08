@@ -43,34 +43,67 @@ class RunCommand:
         self.backoff_factor = backoff_factor
         self.max_delay = max_delay
 
+    def _read_playbook_content(self, playbook_file: Optional[TextIO]) -> str:
+        """Read playbook content from file or stdin."""
+        if playbook_file is None:
+            if sys.stdin.isatty():
+                raise ValueError("Please provide a playbook file or pipe YAML content")
+            return sys.stdin.read()
+        
+        content = playbook_file.read()
+        playbook_file.seek(0)  # Reset file pointer for potential reuse
+        return content
+
+    def _configure_playbook(self, playbook: Playbook, no_resume: bool) -> None:
+        """Configure playbook settings based on command options."""
+        if no_resume and playbook.config.incremental and playbook.config.incremental.enabled:
+            playbook.checkpoint_store = None
+            playbook.content_hash = None
+            self.logger.log_info("Checkpoint resume disabled")
+
+    def _log_execution_timing(self, execution_start: datetime) -> None:
+        """Log execution timing information."""
+        execution_time = (datetime.now() - execution_start).total_seconds()
+        self.logger.log_info(f"Execution completed in {execution_time:.2f} seconds")
+
+    def _check_schedule_drift(self, next_run: datetime) -> None:
+        """Check and log if we're running behind schedule."""
+        current_time = datetime.now()
+        if current_time > next_run:
+            time_behind = (current_time - next_run).total_seconds()
+            # TODO: change to warning once we have a warning logger
+            self.logger.log_info(
+                f"Execution is running {time_behind:.2f} seconds behind schedule. "
+                "Consider adjusting the cron schedule to allow more time between runs."
+            )
+
+    def _wait_until_next_run(self, next_run: datetime) -> None:
+        """Sleep until the next scheduled run time."""
+        sleep_time = max(0, (next_run - datetime.now()).total_seconds())
+        if sleep_time > 0:
+            self.logger.log_info(f"Sleeping for {sleep_time:.2f} seconds")
+            time.sleep(sleep_time)
+
     def execute_playbook(self, playbook_file: Optional[TextIO], no_resume: bool):
         """Execute a playbook from a file or stdin."""
         try:
-            # Read from file or stdin
-            if playbook_file is None:
-                if sys.stdin.isatty():
-                    raise ValueError("Please provide a playbook file or pipe YAML content")
-                content = sys.stdin.read()
-            else:
-                content = playbook_file.read()
-                playbook_file.seek(0)  # Reset file pointer for potential reuse
-
-            # Parse the playbook
+            # Read and parse the playbook
+            content = self._read_playbook_content(playbook_file)
             playbook = Playbook.from_yaml(content, logger=self.logger)
             
-            # Disable incremental execution if --no-resume is specified
-            if no_resume and playbook.config.incremental and playbook.config.incremental.enabled:
-                playbook.checkpoint_store = None
-                playbook.content_hash = None
-                self.logger.log_info("Checkpoint resume disabled")
-                
+            # Configure playbook settings
+            self._configure_playbook(playbook, no_resume)
+            
             # Execute the playbook
             asyncio.run(playbook.execute(self.session_store))
 
         except ValueError as err:
-            self.logger.log_error(str(err))
+            self.logger.log_error(f"Playbook error: {str(err)}")
         except requests.exceptions.RequestException as err:
             self.logger.log_error(f"Request failed: {str(err)}")
+        except Exception as err:
+            self.logger.log_error(f"Unexpected error during playbook execution: {str(err)}")
+            raise
 
     def run(self, playbook_file: Optional[TextIO], no_resume: bool, cron: Optional[str] = None):
         """
@@ -93,14 +126,21 @@ class RunCommand:
                     next_run = cron_iter.get_next(datetime)
                     self.logger.log_info(f"Next run scheduled for: {next_run}")
                     
-                    # Sleep until next run time
-                    time.sleep(max(0, (next_run - datetime.now()).total_seconds()))
+                    # Wait for next run time
+                    self._wait_until_next_run(next_run)
+                    
+                    # Check if we're running behind schedule
+                    self._check_schedule_drift(next_run)
                     
                     try:
+                        execution_start = datetime.now()
+                        self.logger.log_info("Starting playbook execution")
                         self.execute_playbook(playbook_file, no_resume)
+                        self._log_execution_timing(execution_start)
                     except Exception as e:
                         self.logger.log_error(f"Error in scheduled execution: {str(e)}")
                         # Continue to next scheduled run despite errors
+                        
             except ImportError:
                 self.logger.log_error("croniter package is required for cron functionality. Install with: pip install croniter")
                 sys.exit(1)
