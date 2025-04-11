@@ -15,6 +15,7 @@ from .validator import PlaybookYamlValidator
 from .template_renderer import TemplateRenderer
 from .checkpoint import CheckpointStore, CheckpointData, create_checkpoint_store
 from .variables import VariableManager
+from .managers.config_renderer import ConfigRenderer
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
 from ..request.resilient_http_client import RequestParams, ResilientHttpClient, ResilientHttpClientConfig
@@ -46,6 +47,7 @@ class Playbook:
         self.logger = logger
         self.variables = VariableManager(logger)
         self.renderer = TemplateRenderer(logger)
+        self.config_renderer = ConfigRenderer(self.renderer, self.variables)
         self._temp_sessions: Dict[str, Session] = {}
         
         # Initialize checkpoint store if incremental execution is enabled
@@ -144,103 +146,6 @@ class Playbook:
         """Convert the playbook to a dictionary."""
         return self.config.model_dump()
 
-    def _render_session_config(self, session_config: SessionConfig) -> SessionConfig:
-        """Render all template strings in a session configuration."""
-        # Get variables for template context
-        context = self.variables.get_all()
-        
-        rendered_data: Dict[str, Union[str, Optional[AuthConfig]]] = {
-            "base_url": self.renderer.render_template(session_config.base_url, context),
-        }
-        
-        if session_config.auth:
-            auth_data: Dict[str, Union[AuthType, Optional[AuthCredentials]]] = {
-                "type": session_config.auth.type,
-            }
-            
-            if session_config.auth.credentials:
-                creds = session_config.auth.credentials
-                rendered_creds: Dict[str, Union[str, List[str], None]] = {}
-                
-                # Render all credential fields that are set
-                for field in creds.model_fields:
-                    value = getattr(creds, field)
-                    if value is not None:
-                        if isinstance(value, str):
-                            rendered_creds[field] = self.renderer.render_template(value, context)
-                        elif isinstance(value, list):
-                            rendered_creds[field] = [
-                                self.renderer.render_template(item, context) if isinstance(item, str) else item
-                                for item in value
-                            ]
-                        else:
-                            rendered_creds[field] = value
-                
-                auth_data["credentials"] = AuthCredentials.model_validate(rendered_creds)
-            
-            rendered_data["auth"] = AuthConfig.model_validate(auth_data)
-        
-        return SessionConfig.model_validate(rendered_data)
-
-    def _render_request_config(self, request: RequestConfig, step_context: Dict[str, Any]) -> RequestConfig:
-        """Render all template strings in a request configuration."""
-        # Merge step context with global variables
-        context = {**self.variables.get_all(), **step_context}
-        
-        # Handle loading data from file if specified
-        data = None
-        if request.fromFile:
-            # Render the file path with variables/templates
-            file_path = self.renderer.render_template(request.fromFile, context)
-            
-            # Support both absolute paths and paths relative to the working directory
-            if not os.path.isabs(file_path):
-                file_path = os.path.join(os.getcwd(), file_path)
-                
-            try:
-                # Read and parse the JSON file
-                with open(file_path, 'r') as f:
-                    file_content = f.read()
-                    
-                # Parse the file content as JSON
-                data = json.loads(file_content)
-                
-                # Render templates in the loaded data
-                data = self.renderer.render_dict(data, context)
-                self.logger.log_info(f"Loaded request data from file: {file_path}")
-            except FileNotFoundError:
-                raise ValueError(f"Request data file not found: {file_path}")
-            except json.JSONDecodeError:
-                raise ValueError(f"Invalid JSON in request data file: {file_path}")
-            except Exception as e:
-                raise ValueError(f"Error loading request data from file {file_path}: {str(e)}")
-        else:
-            # Use inline data if specified
-            data = self.renderer.render_dict(request.data, context) if request.data else None
-        
-        rendered_data: Dict[str, Union[str, Optional[Dict[str, Any]]]] = {
-            "method": request.method,
-            "endpoint": self.renderer.render_template(request.endpoint, context),
-            "data": data,
-            "params": self.renderer.render_dict(request.params, context) if request.params else None,
-            "headers": self.renderer.render_dict(request.headers, context) if request.headers else None,
-            # Don't include fromFile in the rendered config
-            "fromFile": None
-        }
-        return RequestConfig.model_validate(rendered_data)
-    
-    def _render_store_config(self, store: StoreConfig, step_context: Dict[str, Any]) -> StoreConfig:
-        """Render all template strings in a store configuration."""
-        # Merge step context with global variables
-        context = {**self.variables.get_all(), **step_context}
-        
-        rendered_data: Dict[str, Union[str, Optional[str], bool]] = {
-            "var": self.renderer.render_template(store.var, context),
-            "jq": self.renderer.render_template(store.jq, context) if store.jq else None,
-            "append": store.append
-        }
-        return StoreConfig.model_validate(rendered_data)
-
     async def execute(self, session_store: SessionStore) -> None:
         """
         Execute the playbook using the provided session store.
@@ -264,7 +169,7 @@ class Playbook:
             # Initialize temporary sessions if configured
             if self.config.sessions:
                 for session_name, session_config in self.config.sessions.items():
-                    rendered_config = self._render_session_config(session_config)
+                    rendered_config = self.config_renderer.render_session_config(session_config)
                     self._temp_sessions[session_name] = Session.from_dict(session_name, rendered_config.model_dump())
             
             # Execute phases
@@ -291,7 +196,7 @@ class Playbook:
                         
                         # Execute steps in parallel
                         tasks = [
-                            self._execute_step(step, phase_context_id,step_index, session_store)
+                            self._execute_step(step, phase_context_id, step_index, session_store)
                             for step_index, step in enumerate(phase.steps)
                         ]
                         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -386,9 +291,9 @@ class Playbook:
                     
                     # Create a copy of the step with rendered templates
                     rendered_step = step.model_copy(deep=True)
-                    rendered_step.request = self._render_request_config(step.request, context)
+                    rendered_step.request = self.config_renderer.render_request_config(step.request, context)
                     if step.store:
-                        rendered_step.store = [self._render_store_config(store, context) for store in step.store]
+                        rendered_step.store = [self.config_renderer.render_store_config(store, context) for store in step.store]
                         step_rendered_store.extend(rendered_step.store)
                     else:
                         rendered_step.store = None
@@ -409,9 +314,9 @@ class Playbook:
                     **self.variables.get_all(),
                 }
                 rendered_step = step.model_copy(deep=True)
-                rendered_step.request = self._render_request_config(step.request, context)
+                rendered_step.request = self.config_renderer.render_request_config(step.request, context)
                 if step.store:
-                    rendered_step.store = [self._render_store_config(store, context) for store in step.store]
+                    rendered_step.store = [self.config_renderer.render_store_config(store, context) for store in step.store]
                     step_rendered_store.extend(rendered_step.store)
                 else:
                     rendered_step.store = None
