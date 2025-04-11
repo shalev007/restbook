@@ -8,14 +8,13 @@ import uuid
 from src.modules.session.session import Session
 
 from .config import (
-    AuthType, PlaybookConfig, StepConfig, StoreConfig, 
-    RequestConfig, SessionConfig, AuthConfig, AuthCredentials, RetryConfig
+    PlaybookConfig, StepConfig, RequestConfig, RetryConfig
 )
 from .validator import PlaybookYamlValidator
 from .template_renderer import TemplateRenderer
-from .checkpoint import CheckpointStore, CheckpointData, create_checkpoint_store
 from .variables import VariableManager
 from .managers.config_renderer import ConfigRenderer
+from .managers.checkpoint_manager import CheckpointManager
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
 from ..request.resilient_http_client import RequestParams, ResilientHttpClient, ResilientHttpClientConfig
@@ -48,17 +47,9 @@ class Playbook:
         self.variables = VariableManager(logger)
         self.renderer = TemplateRenderer(logger)
         self.config_renderer = ConfigRenderer(self.renderer, self.variables)
+        self.checkpoint_manager = CheckpointManager(config, logger)
         self._temp_sessions: Dict[str, Session] = {}
         
-        # Initialize checkpoint store if incremental execution is enabled
-        self.checkpoint_store: Optional[CheckpointStore] = None
-        self.content_hash: Optional[str] = None
-        
-        if self.config.incremental and self.config.incremental.enabled:
-            self.content_hash = self._generate_content_hash()
-            self.checkpoint_store = create_checkpoint_store(self.config.incremental)
-            logger.log_info(f"Incremental execution enabled. Content hash: {self.content_hash}")
-            
         # Initialize observers
         self.observers: List[ExecutionObserver] = []
         if self.config.metrics and self.config.metrics.enabled:
@@ -71,58 +62,6 @@ class Playbook:
         self._phase_context_ids: Dict[str, str] = {}  # phase_name -> context_id
         self._step_context_ids: Dict[str, str] = {}  # step_index -> context_id
         self._request_context_ids: Dict[str, str] = {}  # endpoint -> context_id
-
-    def _generate_content_hash(self) -> str:
-        """Generate a hash of the playbook content."""
-        # Convert config to JSON string
-        config_str = json.dumps(self.config.model_dump(exclude={"incremental"}), sort_keys=True)
-        # Generate hash
-        return hashlib.md5(config_str.encode()).hexdigest()
-
-    async def _save_checkpoint(self, phase_index: int, step_index: int) -> None:
-        """Save execution checkpoint."""
-        if not self.checkpoint_store or not self.content_hash:
-            return
-            
-        try:
-            checkpoint = CheckpointData(
-                current_phase=phase_index,
-                current_step=step_index,
-                variables=self.variables.get_all(),
-                content_hash=self.content_hash
-            )
-            
-            await self.checkpoint_store.save(checkpoint)
-            self.logger.log_info(f"Checkpoint saved: Phase {phase_index}, Step {step_index}")
-        except Exception as e:
-            self.logger.log_error(f"Failed to save checkpoint: {str(e)}")
-
-    async def _load_checkpoint(self) -> Optional[CheckpointData]:
-        """Load execution checkpoint."""
-        if not self.checkpoint_store or not self.content_hash:
-            return None
-            
-        try:
-            checkpoint = await self.checkpoint_store.load(self.content_hash)
-            if checkpoint:
-                self.logger.log_info(f"Checkpoint loaded: Phase {checkpoint.current_phase}, Step {checkpoint.current_step}")
-                # Restore variables
-                self.variables.set_all(checkpoint.variables)
-            return checkpoint
-        except Exception as e:
-            self.logger.log_error(f"Failed to load checkpoint: {str(e)}")
-            return None
-
-    async def _clear_checkpoint(self) -> None:
-        """Clear execution checkpoint."""
-        if not self.checkpoint_store or not self.content_hash:
-            return
-            
-        try:
-            await self.checkpoint_store.clear(self.content_hash)
-            self.logger.log_info("Checkpoint cleared")
-        except Exception as e:
-            self.logger.log_error(f"Failed to clear checkpoint: {str(e)}")
 
     @classmethod
     def from_yaml(cls, yaml_content: str, logger: BaseLogger) -> 'Playbook':
@@ -162,9 +101,7 @@ class Playbook:
         
         try:
             # Check for checkpoint if incremental is enabled
-            checkpoint = None
-            if self.checkpoint_store and self.content_hash:
-                checkpoint = await self._load_checkpoint()
+            checkpoint = await self.checkpoint_manager.load_checkpoint()
             
             # Initialize temporary sessions if configured
             if self.config.sessions:
@@ -172,13 +109,14 @@ class Playbook:
                     rendered_config = self.config_renderer.render_session_config(session_config)
                     self._temp_sessions[session_name] = Session.from_dict(session_name, rendered_config.model_dump())
             
+            if checkpoint and checkpoint.variables:
+                    self.variables.set_all(checkpoint.variables)
             # Execute phases
             for phase_index, phase in enumerate(self.config.phases):
                 # Skip phases before checkpoint
-                if checkpoint and phase_index < checkpoint.current_phase:
+                if self.checkpoint_manager.should_skip_phase(phase_index, checkpoint):
                     self.logger.log_info(f"Skipping phase {phase_index}: {phase.name} (already completed)")
                     continue
-                    
                 self.logger.log_info(f"Executing phase {phase_index}: {phase.name}")
                 
                 # Start metrics collection for the phase
@@ -188,7 +126,7 @@ class Playbook:
                 try:
                     if phase.parallel:
                         # For parallel execution, we need to handle checkpoints differently
-                        if checkpoint and phase_index == checkpoint.current_phase:
+                        if self.checkpoint_manager.should_restart_parallel_phase(phase_index, checkpoint):
                             # This is the phase where we left off - we need to re-run it completely
                             # since we can't guarantee which steps completed in parallel execution
                             self.logger.log_info("Restarting parallel phase from beginning")
@@ -207,19 +145,27 @@ class Playbook:
                                 self.logger.log_error(f"Step {step_index} failed: {str(result)}")
                         
                         # Save checkpoint after parallel phase
-                        await self._save_checkpoint(phase_index, len(phase.steps) - 1)
+                        await self.checkpoint_manager.save_checkpoint(
+                            phase_index, 
+                            len(phase.steps) - 1,
+                            self.variables.get_all()
+                        )
                     else:
                         # Execute steps sequentially
                         for step_index, step in enumerate(phase.steps):
                             # Skip steps before checkpoint in the current phase
-                            if checkpoint and phase_index == checkpoint.current_phase and step_index <= checkpoint.current_step:
+                            if self.checkpoint_manager.should_skip_step(phase_index, step_index, checkpoint):
                                 self.logger.log_info(f"Skipping step {step_index} (already completed)")
                                 continue
                                 
                             await self._execute_step(step, phase_context_id, step_index, session_store)
                             
                             # Save checkpoint after each step
-                            await self._save_checkpoint(phase_index, step_index)
+                            await self.checkpoint_manager.save_checkpoint(
+                                phase_index, 
+                                step_index,
+                                self.variables.get_all()
+                            )
                     
                     # End metrics collection for the phase
                     self._notify_observers(PhaseEndEvent(phase.name, bool(phase.parallel)))
@@ -231,8 +177,6 @@ class Playbook:
                         pass
                     raise
                 
-                # Clear checkpoint after successful execution
-                await self._clear_checkpoint()
             
         except Exception as e:
             self.logger.log_error(str(e))
@@ -253,6 +197,8 @@ class Playbook:
             self._phase_context_ids.clear()
             self._step_context_ids.clear()
             self._request_context_ids.clear()
+            # Clear checkpoint after successful execution
+            await self.checkpoint_manager.clear_checkpoint()
 
     async def _execute_step(self, step: StepConfig, phase_context_id: str, step_index: int, session_store: SessionStore) -> None:
         """
