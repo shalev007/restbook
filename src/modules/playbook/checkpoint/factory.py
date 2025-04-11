@@ -1,25 +1,33 @@
-from typing import Dict, Type
+from typing import Optional
 
+from src.modules.session.session_store import SessionStore
+from src.modules.logging import BaseLogger
+
+from .file import FileCheckpointStore
+from .remote import RemoteCheckpointStore
 from ..config import IncrementalConfig, IncrementalStoreType
 from .base import CheckpointStore
-from .file import FileCheckpointStore
 
-def create_checkpoint_store(config: IncrementalConfig) -> CheckpointStore:
-    """Create a checkpoint store based on the configuration."""
-    store_types: Dict[IncrementalStoreType, Type[CheckpointStore]] = {
-        IncrementalStoreType.FILE: FileCheckpointStore,
-    }
+def create_checkpoint_store(
+    config: IncrementalConfig,
+    session_store: SessionStore,
+    logger: BaseLogger
+) -> Optional[CheckpointStore]:
+    """
+    Create a checkpoint store based on configuration.
     
-    if config.store not in store_types:
-        raise ValueError(f"Unsupported checkpoint store type: {config.store}")
-    
-    store_class = store_types[config.store]
-    
-    if config.store == IncrementalStoreType.FILE:
-        if not config.file_path:
-            raise ValueError("file_path is required for file-based checkpoint store")
-        return store_class(config)
-    
-    # Add other store type initializations here as they are added
-    
-    raise ValueError(f"Unsupported checkpoint store type: {config.store}") 
+    Args:
+        config: Incremental execution configuration
+        session_store: Session store for retrieving sessions
+        logger: Logger instance
+        
+    Returns:
+        CheckpointStore: The created checkpoint store
+    """
+    if not config.enabled:
+        return None
+        
+    if config.store == IncrementalStoreType.REMOTE:
+        return RemoteCheckpointStore(config, session_store, logger)
+    else:
+        return FileCheckpointStore(config) 
