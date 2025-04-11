@@ -15,6 +15,7 @@ from .template_renderer import TemplateRenderer
 from .variables import VariableManager
 from .managers.config_renderer import ConfigRenderer
 from .managers.checkpoint_manager import CheckpointManager
+from .managers.session_manager import SessionManager
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
 from ..request.resilient_http_client import RequestParams, ResilientHttpClient, ResilientHttpClientConfig
@@ -48,7 +49,7 @@ class Playbook:
         self.renderer = TemplateRenderer(logger)
         self.config_renderer = ConfigRenderer(self.renderer, self.variables)
         self.checkpoint_manager = CheckpointManager(config, logger)
-        self._temp_sessions: Dict[str, Session] = {}
+        self.session_manager = SessionManager(self.config_renderer, logger)
         
         # Initialize observers
         self.observers: List[ExecutionObserver] = []
@@ -104,11 +105,9 @@ class Playbook:
             checkpoint = await self.checkpoint_manager.load_checkpoint()
             
             # Initialize temporary sessions if configured
-            if self.config.sessions:
-                for session_name, session_config in self.config.sessions.items():
-                    rendered_config = self.config_renderer.render_session_config(session_config)
-                    self._temp_sessions[session_name] = Session.from_dict(session_name, rendered_config.model_dump())
-            
+            self.session_manager.initialize_temp_sessions(self.config.sessions)
+
+            # Set variables from checkpoint if available
             if checkpoint and checkpoint.variables:
                     self.variables.set_all(checkpoint.variables)
             # Execute phases
@@ -183,7 +182,7 @@ class Playbook:
             raise
         finally:
             # Clean up temporary sessions
-            self._temp_sessions.clear()
+            self.session_manager.clear_temp_sessions()
             
             # Finalize playbook metrics
             self._notify_observers(PlaybookEndEvent())
@@ -301,10 +300,7 @@ class Playbook:
             session_store: The session store for retrieving sessions
         """
         # Get session for this step
-        if step.session in self._temp_sessions:
-            session = self._temp_sessions[step.session]
-        else:
-            session = session_store.get_session(step.session)
+        session = self.session_manager.get_session(step.session, session_store)
 
         # Merge session and step configurations
         # Start with session's retry config as base, or default values
