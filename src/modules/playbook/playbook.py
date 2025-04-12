@@ -3,7 +3,6 @@ from typing import Dict, Any, Optional, List
 import asyncio
 import uuid
 
-
 from .config import (
     PlaybookConfig, StepConfig, RequestConfig, RetryConfig
 )
@@ -13,21 +12,17 @@ from .variables import VariableManager
 from .managers.config_renderer import ConfigRenderer
 from .managers.checkpoint_manager import CheckpointManager
 from .managers.session_manager import SessionManager
+from .managers.observer_manager import ObserverManager
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
 from ..request.resilient_http_client import RequestParams, ResilientHttpClient, ResilientHttpClientConfig
 from ..request.circuit_breaker import CircuitBreaker
-from .metrics import (
-    create_metrics_collector
-)
-from .observer import (
-    ExecutionObserver,
+from .observer.events import (
     PlaybookStartEvent, PlaybookEndEvent,
     PhaseStartEvent, PhaseEndEvent,
     StepStartEvent, StepEndEvent,
     RequestStartEvent, RequestEndEvent
 )
-from .observer.metrics_observer import MetricsObserver
 from .context.execution_context import PhaseContext, RequestContext, StepContext
 
 class Playbook:
@@ -48,14 +43,7 @@ class Playbook:
         self.config_renderer = ConfigRenderer(self.renderer, self.variables)
         self.checkpoint_manager = CheckpointManager(config, logger)
         self.session_manager = SessionManager(self.config_renderer, logger)
-        
-        # Initialize observers
-        self.observers: List[ExecutionObserver] = []
-        if self.config.metrics and self.config.metrics.enabled:
-            metrics_collector = create_metrics_collector(self.config.metrics)
-            self.observers.append(MetricsObserver(metrics_collector))
-            logger.log_info(f"Metrics collection enabled with collector type: {self.config.metrics.collector}")
-
+        self.observer_manager = ObserverManager(config, logger)
 
     @classmethod
     def from_yaml(cls, yaml_content: str, logger: BaseLogger) -> 'Playbook':
@@ -91,7 +79,7 @@ class Playbook:
             aiohttp.ClientError: If any request fails
         """
         # Start metrics collection for the playbook
-        self._notify_observers(PlaybookStartEvent())
+        self.observer_manager.notify(PlaybookStartEvent())
         
         try:
             # Check for checkpoint if incremental is enabled
@@ -113,7 +101,7 @@ class Playbook:
                 self.logger.log_info(f"Executing phase {phase.index}: {phase.name}")
                 
                 # Start metrics collection for the phase
-                self._notify_observers(PhaseStartEvent(phase))
+                self.observer_manager.notify(PhaseStartEvent(phase))
                 
                 try:
                     if phase.parallel:
@@ -160,11 +148,11 @@ class Playbook:
                             )
                     
                     # End metrics collection for the phase
-                    self._notify_observers(PhaseEndEvent(phase))
+                    self.observer_manager.notify(PhaseEndEvent(phase))
                 except Exception as e:
                     # Clean up the phase metrics context in case of error
                     try:
-                        self._notify_observers(PhaseEndEvent(phase))
+                        self.observer_manager.notify(PhaseEndEvent(phase))
                     except Exception:
                         pass
                     raise
@@ -179,11 +167,10 @@ class Playbook:
             self.session_manager.clear_temp_sessions()
             
             # Finalize playbook metrics
-            self._notify_observers(PlaybookEndEvent())
+            self.observer_manager.notify(PlaybookEndEvent())
             
             # Clean up observers
-            for observer in self.observers:
-                observer.cleanup()
+            self.observer_manager.cleanup()
 
     async def _execute_step(self, step_config: StepConfig, phase_context_id: str, step_index: int, session_store: SessionStore) -> None:
         """
@@ -199,7 +186,7 @@ class Playbook:
         step = StepContext(phase_context_id, step_index, step_config, session)
         
         # Start metrics collection for the step
-        self._notify_observers(StepStartEvent(step))
+        self.observer_manager.notify(StepStartEvent(step))
         try:
             if step.iterate:
                 # Parse iteration configuration
@@ -263,9 +250,7 @@ class Playbook:
                 raise
         
         # End metrics collection for the step
-        # Create dictionary of variable names to values
-        
-        self._notify_observers(StepEndEvent(step))
+        self.observer_manager.notify(StepEndEvent(step))
 
     async def _execute_single_step(self, context: StepContext, override_config: StepConfig | None = None) -> None:
         """
@@ -331,7 +316,7 @@ class Playbook:
 
         request_context = RequestContext(step_id=context.id, config=step.request)
         # Start metrics collection for the request
-        self._notify_observers(RequestStartEvent(request_context))
+        self.observer_manager.notify(RequestStartEvent(request_context))
         
         try:
             # Execute request
@@ -366,8 +351,7 @@ class Playbook:
             # Get request metadata and end metrics collection
             metadata = client.get_last_request_execution_metadata()
             if metadata:
-                self._notify_observers(RequestEndEvent(request_context, metadata))
-
+                self.observer_manager.notify(RequestEndEvent(request_context, metadata))
 
     def _convert_to_executor_config(self, playbook_config: RequestConfig) -> RequestParams:
         """Convert a playbook request config to an executor request config.
@@ -378,7 +362,6 @@ class Playbook:
         Returns:
             RequestParams: The executor's request configuration
         """
-        
         return RequestParams(
             url=playbook_config.endpoint,
             method=playbook_config.method.value,
@@ -386,28 +369,3 @@ class Playbook:
             data=playbook_config.data,
             params=playbook_config.params
         )
-
-    def _notify_observers(self, event: Any) -> None:
-        """Notify all observers of an event.""" 
-
-        for observer in self.observers:
-            if isinstance(event, PlaybookStartEvent):
-                # Generate new playbook context ID
-                observer.on_playbook_start(event)
-            elif isinstance(event, PlaybookEndEvent):
-                observer.on_playbook_end(event)
-            elif isinstance(event, PhaseStartEvent):
-                # Generate new phase context ID
-                observer.on_phase_start(event)
-            elif isinstance(event, PhaseEndEvent):
-                observer.on_phase_end(event)
-            elif isinstance(event, StepStartEvent):
-                # Generate new step context ID
-                observer.on_step_start(event)
-            elif isinstance(event, StepEndEvent):
-                observer.on_step_end(event)
-            elif isinstance(event, RequestStartEvent):
-                # Generate new request context ID
-                observer.on_request_start(event)
-            elif isinstance(event, RequestEndEvent):
-                observer.on_request_end(event)
