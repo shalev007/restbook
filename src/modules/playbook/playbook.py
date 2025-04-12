@@ -28,23 +28,71 @@ from .context.execution_context import PhaseContext, RequestContext, StepContext
 class Playbook:
     """Represents a playbook that can be executed."""
     
-    def __init__(self, config: PlaybookConfig, logger: BaseLogger):
+    def __init__(self,
+                 config: PlaybookConfig,
+                 logger: BaseLogger,
+                 variables: VariableManager,
+                 renderer: TemplateRenderer,
+                 config_renderer: ConfigRenderer,
+                 checkpoint_manager: CheckpointManager,
+                 session_manager: SessionManager,
+                 observer_manager: ObserverManager,
+                 client_factory: ResilientHttpClientFactory):
         """
-        Initialize a playbook with a configuration.
+        Initialize a playbook with its dependencies.
         
         Args:
             config: The playbook configuration
             logger: Logger instance for request/response logging
+            variables: Manager for handling variables
+            renderer: Template renderer for processing templates
+            config_renderer: Renders configuration with variables
+            checkpoint_manager: Manages execution checkpoints
+            session_manager: Manages HTTP sessions
+            observer_manager: Manages execution observers
+            client_factory: Factory for creating HTTP clients
         """
         self.config = config
         self.logger = logger
-        self.variables = VariableManager(logger)
-        self.renderer = TemplateRenderer(logger)
-        self.config_renderer = ConfigRenderer(self.renderer, self.variables)
-        self.checkpoint_manager = CheckpointManager(config, logger)
-        self.session_manager = SessionManager(self.config_renderer, logger)
-        self.observer_manager = ObserverManager(config, logger)
-        self.client_factory = ResilientHttpClientFactory(logger)
+        self.variables = variables
+        self.renderer = renderer
+        self.config_renderer = config_renderer
+        self.checkpoint_manager = checkpoint_manager
+        self.session_manager = session_manager
+        self.observer_manager = observer_manager
+        self.client_factory = client_factory
+
+    @classmethod
+    def create(cls, config: PlaybookConfig, logger: BaseLogger) -> 'Playbook':
+        """
+        Factory method to create a Playbook instance with default dependencies.
+        
+        Args:
+            config: The playbook configuration
+            logger: Logger instance for request/response logging
+            
+        Returns:
+            Playbook: A new playbook instance with default dependencies
+        """
+        variables = VariableManager(logger)
+        renderer = TemplateRenderer(logger)
+        config_renderer = ConfigRenderer(renderer, variables)
+        checkpoint_manager = CheckpointManager(config, logger)
+        session_manager = SessionManager(config_renderer, logger)
+        observer_manager = ObserverManager(config, logger)
+        client_factory = ResilientHttpClientFactory(logger)
+        
+        return cls(
+            config=config,
+            logger=logger,
+            variables=variables,
+            renderer=renderer,
+            config_renderer=config_renderer,
+            checkpoint_manager=checkpoint_manager,
+            session_manager=session_manager,
+            observer_manager=observer_manager,
+            client_factory=client_factory
+        )
 
     @classmethod
     def from_yaml(cls, yaml_content: str, logger: BaseLogger) -> 'Playbook':
@@ -62,7 +110,7 @@ class Playbook:
             ValueError: If the YAML content is invalid
         """
         config = PlaybookYamlValidator.validate_and_load(yaml_content)
-        return cls(config, logger)
+        return cls.create(config, logger)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the playbook to a dictionary."""
