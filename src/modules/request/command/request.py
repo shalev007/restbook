@@ -11,7 +11,7 @@ from ...logging import BaseLogger
 from ...session.session_store import SessionStore
 from ...session.session import Session
 from ...session.swagger.client import SwaggerClient
-from ..resilient_http_client import ResilientHttpClient, ResilientHttpClientConfig, RequestParams
+from ..resilient_http_client import ResilientHttpClient, ResilientHttpClientConfig, HttpRequestSpec
 
 
 class EndpointCompleter(Completer):
@@ -140,7 +140,7 @@ class RequestCommand:
         try:
             # Execute request
             response = await executor.execute_request(
-                RequestParams(
+                HttpRequestSpec(
                     method=method,
                     url=endpoint,
                     data=data,

@@ -57,8 +57,7 @@ class RunCommand:
     def _configure_playbook(self, playbook: Playbook, no_resume: bool) -> None:
         """Configure playbook settings based on command options."""
         if no_resume and playbook.config.incremental and playbook.config.incremental.enabled:
-            playbook.checkpoint_store = None
-            playbook.content_hash = None
+            playbook.config.incremental.enabled = False
             self.logger.log_info("Checkpoint resume disabled")
 
     def _log_execution_timing(self, execution_start: datetime) -> None:

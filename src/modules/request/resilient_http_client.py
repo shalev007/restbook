@@ -22,13 +22,17 @@ class ResilientHttpClientConfig(BaseModel):
     retry_header: str = "Retry-After"  # Header name for server's retry delay
     retry_on_404: bool = False  # Whether to retry on 404 responses
 
-class RequestParams(BaseModel):
+class HttpRequestSpec(BaseModel):
+    """Specification for an HTTP request."""
     url: str
     method: str
     headers: Optional[Dict[str, str]] = None
     data: Optional[Dict[str, Any]] = None
     params: Optional[Dict[str, Any]] = None
     
+    
+
+
 
 class RequestExecutionMetadata(BaseModel):
     """Metadata about a request execution."""
@@ -104,12 +108,12 @@ class ResilientHttpClient:
 
     async def execute_request(
         self,
-        request_params: RequestParams
+        request_spec: HttpRequestSpec
     ) -> aiohttp.ClientResponse:
         """Execute an HTTP request asynchronously.
         
         Args:
-            request_params: Configuration for the request to execute
+            request_spec: Specification for the request to execute
             
         Returns:
             aiohttp.ClientResponse: The response from the server
@@ -123,23 +127,23 @@ class ResilientHttpClient:
         """
         # Initialize metadata for this request
         self._last_request_metadata = RequestExecutionMetadata(
-            method=request_params.method,
-            url=request_params.url,
+            method=request_spec.method,
+            url=request_spec.url,
             start_time=datetime.now(),
-            headers=request_params.headers,
-            params=request_params.params,
-            data=request_params.data,
+            headers=request_spec.headers,
+            params=request_spec.params,
+            data=request_spec.data,
             errors=[]  # Initialize empty errors list
         )
 
         # Calculate request size
-        if request_params.data:
-            if isinstance(request_params.data, (dict, list)):
-                self._last_request_metadata.request_size_bytes = len(json.dumps(request_params.data).encode('utf-8'))
-            elif isinstance(request_params.data, str):
-                self._last_request_metadata.request_size_bytes = len(request_params.data.encode('utf-8'))
-            elif isinstance(request_params.data, bytes):
-                self._last_request_metadata.request_size_bytes = len(request_params.data)
+        if request_spec.data:
+            if isinstance(request_spec.data, (dict, list)):
+                self._last_request_metadata.request_size_bytes = len(json.dumps(request_spec.data).encode('utf-8'))
+            elif isinstance(request_spec.data, str):
+                self._last_request_metadata.request_size_bytes = len(request_spec.data.encode('utf-8'))
+            elif isinstance(request_spec.data, bytes):
+                self._last_request_metadata.request_size_bytes = len(request_spec.data)
 
         # Get or create client session
         client = await self.session_cache.get_session(
@@ -156,7 +160,7 @@ class ResilientHttpClient:
                         self._handle_error(error_msg)
                         await asyncio.sleep(self.circuit_breaker.get_reset_timeout())
                     
-                    params = await self._build_request_params(request_params)
+                    params = await self._build_request_params(request_spec)
                     # Get fresh headers for each attempt in case of auth refresh
                     # Make the request
                     response = await client.request(
@@ -288,26 +292,26 @@ class ResilientHttpClient:
             # Always close the session after execution
             await self.session_cache.close()
 
-    async def _build_request_params(self, request_params: RequestParams) -> Dict[str, Any]:
-        """Build the request parameters for the request.
+    async def _build_request_params(self, request_spec: HttpRequestSpec) -> Dict[str, Any]:
+        """Build the final request parameters by merging session and request details.
         
         Args:
-            request_params: Configuration for the request to execute
+            request_spec: Configuration for the request to execute
         """
 
         request_headers = {}
         if not self.session.is_authenticated():
             await self.session.authenticate()
         request_headers = self.session.get_headers()
-        if request_params.headers:
-            request_headers.update(request_params.headers)
+        if request_spec.headers:
+            request_headers.update(request_spec.headers)
 
         return {
-            "url": f"{self.session.base_url.rstrip('/')}/{request_params.url.lstrip('/')}",
-            "method": request_params.method,
+            "url": f"{self.session.base_url.rstrip('/')}/{request_spec.url.lstrip('/')}",
+            "method": request_spec.method,
             "headers": request_headers,
-            "data": request_params.data,
-            "params": request_params.params
+            "data": request_spec.data,
+            "params": request_spec.params
         }
 
     async def _handle_auth_retry(self) -> bool:

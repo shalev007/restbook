@@ -15,8 +15,8 @@ from .managers.session_manager import SessionManager
 from .managers.observer_manager import ObserverManager
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
-from ..request.resilient_http_client import RequestParams, ResilientHttpClient, ResilientHttpClientConfig
-from ..request.circuit_breaker import CircuitBreaker
+from ..request.resilient_http_client import HttpRequestSpec, ResilientHttpClient
+from ..request.client_factory import ResilientHttpClientFactory
 from .observer.events import (
     PlaybookStartEvent, PlaybookEndEvent,
     PhaseStartEvent, PhaseEndEvent,
@@ -44,6 +44,7 @@ class Playbook:
         self.checkpoint_manager = CheckpointManager(config, logger)
         self.session_manager = SessionManager(self.config_renderer, logger)
         self.observer_manager = ObserverManager(config, logger)
+        self.client_factory = ResilientHttpClientFactory(logger)
 
     @classmethod
     def from_yaml(cls, yaml_content: str, logger: BaseLogger) -> 'Playbook':
@@ -264,63 +265,22 @@ class Playbook:
         session = context.session
         step = override_config if override_config else context.config
 
-        # Merge session and step configurations
-        # Start with session's retry config as base, or default values
-        base_retry = RetryConfig(
-            max_retries=session.retry_config.max_retries if session.retry_config else 2,
-            backoff_factor=session.retry_config.backoff_factor if session.retry_config else 1.0,
-            max_delay=session.retry_config.max_delay if session.retry_config else None
-        )
-        
-        # Override with step's retry config if provided
-        retry_config = RetryConfig(
-            max_retries=step.retry.max_retries if step.retry else base_retry.max_retries,
-            backoff_factor=step.retry.backoff_factor if step.retry else base_retry.backoff_factor,
-            max_delay=step.retry.max_delay if step.retry else base_retry.max_delay
-        )
-        
-        validate_ssl = step.validate_ssl if step.validate_ssl is not None else (session.validate_ssl if session.validate_ssl is not None else True)
-        timeout = step.timeout if step.timeout is not None else (session.timeout if session.timeout is not None else 30)
-        
-        # Use step's circuit breaker config if provided, otherwise use session's circuit breaker
-        circuit_breaker = None
-        if step.retry and step.retry.circuit_breaker:
-            circuit_breaker = CircuitBreaker(
-                threshold=step.retry.circuit_breaker.threshold,
-                reset_timeout=step.retry.circuit_breaker.reset,
-                jitter=step.retry.circuit_breaker.jitter
-            )
-        elif session.circuit_breaker:
-            circuit_breaker = session.circuit_breaker
-        
-        execution_config = ResilientHttpClientConfig(
-            timeout=timeout,
-            verify_ssl=validate_ssl,
-            max_retries=retry_config.max_retries,
-            backoff_factor=retry_config.backoff_factor,
-            max_delay=retry_config.max_delay,
-            use_server_retry_delay=retry_config.rate_limit.use_server_retry_delay if step.retry and step.retry.rate_limit else False,
-            retry_header=retry_config.rate_limit.retry_header if step.retry and step.retry.rate_limit and retry_config.rate_limit.retry_header else ""
-        )
-
-        # Convert playbook request config to executor request config
-        request_config = self._convert_to_executor_config(step.request)
-
-        # Create request executor with step-specific config
-        client = ResilientHttpClient(
-            session=session,
-            config=execution_config,
-            logger=self.logger,
-            circuit_breaker=circuit_breaker
-        )
-
+        # Create client using factory
+        client = self.client_factory.create_client(session, step)
         request_context = RequestContext(step_id=context.id, config=step.request)
+        
         # Start metrics collection for the request
         self.observer_manager.notify(RequestStartEvent(request_context))
         
         try:
             # Execute request
-            response = await client.execute_request(request_config)
+            response = await client.execute_request(HttpRequestSpec(
+                url=step.request.endpoint,
+                method=step.request.method.value,
+                headers=step.request.headers,
+                data=step.request.data,
+                params=step.request.params
+            ))
 
             # Log response
             self.logger.log_status(response.status)
@@ -352,20 +312,3 @@ class Playbook:
             metadata = client.get_last_request_execution_metadata()
             if metadata:
                 self.observer_manager.notify(RequestEndEvent(request_context, metadata))
-
-    def _convert_to_executor_config(self, playbook_config: RequestConfig) -> RequestParams:
-        """Convert a playbook request config to an executor request config.
-        
-        Args:
-            playbook_config: The playbook's request configuration
-            
-        Returns:
-            RequestParams: The executor's request configuration
-        """
-        return RequestParams(
-            url=playbook_config.endpoint,
-            method=playbook_config.method.value,
-            headers=playbook_config.headers,
-            data=playbook_config.data,
-            params=playbook_config.params
-        )
