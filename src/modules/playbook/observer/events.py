@@ -1,12 +1,30 @@
 """Base event classes for the observer pattern."""
 from abc import ABC
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, List
+from dataclasses import dataclass
+
+from src.modules.playbook.context.execution_context import (
+    PhaseContext,
+    StepContext,
+    RequestContext
+)
+from src.modules.request.resilient_http_client import RequestExecutionMetadata
+
+@dataclass
+class RequestMetadata:
+    """Metadata for request execution results."""
+    status_code: int
+    success: bool
+    error: Optional[str] = None
+    errors: Optional[List[str]] = None
+    request_size_bytes: Optional[int] = None
+    response_size_bytes: Optional[int] = None
 
 class ExecutionEvent(ABC):
     """Base class for all execution events."""
-    def __init__(self, timestamp: Optional[datetime] = None):
-        self.timestamp = timestamp or datetime.now()
+    def __init__(self):
+        self.timestamp = datetime.now()
 
 class PlaybookEvent(ExecutionEvent):
     """Base class for playbook-level events."""
@@ -14,21 +32,24 @@ class PlaybookEvent(ExecutionEvent):
 
 class PhaseEvent(ExecutionEvent):
     """Base class for phase-level events."""
-    def __init__(self, phase_name: str, timestamp: Optional[datetime] = None):
-        super().__init__(timestamp)
+    def __init__(self, id: str, phase_name: str):
+        super().__init__()
+        self.id = id
         self.phase_name = phase_name
 
 class StepEvent(ExecutionEvent):
     """Base class for step-level events."""
-    def __init__(self, step_index: int, session: str, timestamp: Optional[datetime] = None):
-        super().__init__(timestamp)
+    def __init__(self, id: str, step_index: int, session: str):
+        super().__init__()
+        self.id = id
         self.step_index = step_index
         self.session = session
 
 class RequestEvent(ExecutionEvent):
     """Base class for request-level events."""
-    def __init__(self, method: str, endpoint: str, timestamp: Optional[datetime] = None):
-        super().__init__(timestamp)
+    def __init__(self, id: str, method: str, endpoint: str):
+        super().__init__()
+        self.id = id
         self.method = method
         self.endpoint = endpoint
 
@@ -43,60 +64,47 @@ class PlaybookEndEvent(PlaybookEvent):
 
 class PhaseStartEvent(PhaseEvent):
     """Event emitted when a phase starts execution."""
-    pass
+    def __init__(self, context: PhaseContext):
+        super().__init__(context.id, context.name)
 
 class PhaseEndEvent(PhaseEvent):
     """Event emitted when a phase ends execution."""
-    def __init__(self, phase_name: str, parallel: bool, timestamp: Optional[datetime] = None):
-        super().__init__(phase_name, timestamp)
-        self.parallel = parallel
+    def __init__(self, context: PhaseContext):
+        super().__init__(context.id, context.name)
+        self.parallel = context.parallel
 
 class StepStartEvent(StepEvent):
     """Event emitted when a step starts execution."""
-    def __init__(self, phase_context_id: str, step_index: int, session: str, timestamp: Optional[datetime] = None):
-        super().__init__(step_index, session, timestamp)
-        self.phase_context_id = phase_context_id
+    def __init__(self, context: StepContext):
+        super().__init__(context.id, context.index, context.session.name)
+        self.phase_id = context.phase_id
+        self.index = context.index
+        self.session = context.session.name
 
 class StepEndEvent(StepEvent):
     """Event emitted when a step ends execution."""
-    def __init__(
-        self,
-        step_index: int,
-        session: str,
-        retry_count: int,
-        store_vars: Dict[str, Any],
-        timestamp: Optional[datetime] = None
-    ):
-        super().__init__(step_index, session, timestamp)
-        self.retry_count = retry_count
-        self.store_vars = store_vars
+    def __init__(self, context: StepContext):
+        super().__init__(context.id, context.index, context.session.name)
+        self.store_results = context.store_results
 
 class RequestStartEvent(RequestEvent):
     """Event emitted when a request starts execution."""
-    def __init__(self, step_id: str, method: str, endpoint: str, request_uuid: str, timestamp: Optional[datetime] = None):
-        super().__init__(method, endpoint, timestamp)
-        self.step_id = step_id
-        self.request_uuid = request_uuid
+    def __init__(self, context: RequestContext):
+        super().__init__(context.id, context.config.method.value, context.config.endpoint)
+        self.step_id = context.step_id
+
 class RequestEndEvent(RequestEvent):
     """Event emitted when a request ends execution."""
     def __init__(
-        self,
-        method: str,
-        endpoint: str,
-        request_uuid: str,
-        status_code: int,
-        success: bool,
-        error: Optional[str],
-        errors: Optional[List[str]],
-        request_size_bytes: Optional[int],
-        response_size_bytes: Optional[int],
-        timestamp: Optional[datetime] = None
+        self, 
+        context: RequestContext, 
+        metadata: RequestExecutionMetadata
     ):
-        super().__init__(method, endpoint, timestamp)
-        self.status_code = status_code
-        self.success = success
-        self.error = error
-        self.errors = errors
-        self.request_size_bytes = request_size_bytes
-        self.response_size_bytes = response_size_bytes 
-        self.request_uuid = request_uuid
+        super().__init__(context.id, context.config.method.value, context.config.endpoint)
+        self.status_code = metadata.status_code or 0
+        self.success = metadata.success or False
+        self.error = metadata.errors[-1] if metadata.errors else None
+        self.errors = metadata.errors
+        self.request_size_bytes = metadata.request_size_bytes
+        self.response_size_bytes = metadata.response_size_bytes
+        self.retry_count = metadata.retry_count

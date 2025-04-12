@@ -40,11 +40,16 @@ class VariableManager:
         self.variables.clear()
         self.logger.log_info("Cleared all variables")
         
-    async def store_response_data(self, store_configs: List[StoreConfig], body: Dict[str, Any]) -> None:
-        """Store response data using configured JQ queries."""
+    async def store_response_data(self, store_configs: List[StoreConfig], body: Dict[str, Any]) -> Dict[str, Any]:
+        """Store response data using configured JQ queries.
+        
+        Returns:
+            Dict[str, Any]: Dictionary of variable names and their stored values
+        """
         if not store_configs:
-            return
+            return {}
 
+        stored_vars = {}
         for store_config in store_configs:
             try:
                 # Compile and execute JQ query
@@ -57,11 +62,17 @@ class VariableManager:
                 else:
                     # Normal replacement mode
                     self.set(store_config.var, result)
+                
+                # Store the result in our return dict
+                stored_vars[store_config.var] = result
+                
             except Exception as e:
                 body_str = json.dumps(body, indent=2)
                 self.logger.log_error(f"Failed to store variable '{store_config.var}': {str(e)}")
                 self.logger.log_error(f"Body: {body_str}")
                 raise
+                
+        return stored_vars
     
     def _append_value(self, var_name: str, value: Any) -> None:
         """Append a value to a variable, creating a list if needed."""
