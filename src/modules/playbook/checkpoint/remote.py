@@ -3,6 +3,7 @@ from ..config import IncrementalConfig
 from ...session.session_store import SessionStore
 from .base import CheckpointStore, CheckpointData
 from ...logging import BaseLogger
+from ...request.resilient_http_client import ResilientHttpClient, ResilientHttpClientConfig, HttpRequestSpec
 
 class RemoteCheckpointStore(CheckpointStore):
     """Remote implementation of checkpoint storage using a session."""
@@ -19,20 +20,38 @@ class RemoteCheckpointStore(CheckpointStore):
         self.session = session_store.get_session(config.session)
         self.endpoint = config.endpoint.rstrip('/')
         
-        # Validate connection immediately
-        self.validate_connection()
+        # Initialize the resilient HTTP client
+        client_config = ResilientHttpClientConfig(
+            timeout=30,  # 30 second timeout
+            verify_ssl=True,
+            max_retries=3,  # Retry up to 3 times
+            backoff_factor=1.0,  # Exponential backoff
+            max_delay=60  # Maximum 60 second delay between retries
+        )
+        self.http_client = ResilientHttpClient(
+            session=self.session,
+            config=client_config,
+            logger=logger
+        )
     
-    def validate_connection(self) -> None:
+    async def initialize(self) -> None:
+        """Initialize the checkpoint store by validating the connection."""
+        await self.validate_connection()
+    
+    async def validate_connection(self) -> None:
         """Validate we can connect to the checkpoint store."""
         try:
-            # Try a HEAD request to validate connection
-            response = self.session.head(f"{self.endpoint}/health")
+            request = HttpRequestSpec(
+                url=f"{self.endpoint}/health",
+                method="HEAD"
+            )
+            response = await self.http_client.execute_request(request)
             
-            if response.status_code != 200:
+            if response.status != 200:
                 raise ValueError(
-                    f"Checkpoint store validation failed: {response.status_code}"
+                    f"Checkpoint store validation failed: {response.status}"
                 )
-                
+            
             self.logger.log_info("Successfully connected to checkpoint store")
             
         except Exception as e:
@@ -43,21 +62,24 @@ class RemoteCheckpointStore(CheckpointStore):
     async def save(self, data: CheckpointData) -> None:
         """Save checkpoint data to remote store."""
         try:
-            response = await self.session.post(
-                f"{self.endpoint}/checkpoints/{data.content_hash}",
-                json={
+            request = HttpRequestSpec(
+                url=f"{self.endpoint}/checkpoints/{data.content_hash}",
+                method="POST",
+                headers={"Content-Type": "application/json"},
+                data={
                     "current_phase": data.current_phase,
                     "current_step": data.current_step,
                     "variables": data.variables,
                     "content_hash": data.content_hash
                 }
             )
+            response = await self.http_client.execute_request(request)
             
-            if response.status_code not in (200, 201):
+            if response.status not in (200, 201):
                 raise ValueError(
-                    f"Failed to save checkpoint: {response.status_code}"
+                    f"Failed to save checkpoint: {response.status}"
                 )
-                
+            
             self.logger.log_info(f"Checkpoint saved: {data.content_hash}")
             
         except Exception as e:
@@ -67,19 +89,21 @@ class RemoteCheckpointStore(CheckpointStore):
     async def load(self, content_hash: str) -> Optional[CheckpointData]:
         """Load checkpoint data from remote store."""
         try:
-            response = await self.session.get(
-                f"{self.endpoint}/checkpoints/{content_hash}"
+            request = HttpRequestSpec(
+                url=f"{self.endpoint}/checkpoints/{content_hash}",
+                method="GET"
             )
+            response = await self.http_client.execute_request(request)
             
-            if response.status_code == 404:
+            if response.status == 404:
                 return None
-                
-            if response.status_code != 200:
+            
+            if response.status != 200:
                 raise ValueError(
-                    f"Failed to load checkpoint: {response.status_code}"
+                    f"Failed to load checkpoint: {response.status}"
                 )
-                
-            data = response.json()
+            
+            data = await response.json()
             return CheckpointData(
                 current_phase=data["current_phase"],
                 current_step=data["current_step"],
@@ -94,15 +118,17 @@ class RemoteCheckpointStore(CheckpointStore):
     async def clear(self, content_hash: str) -> None:
         """Clear checkpoint data from remote store."""
         try:
-            response = await self.session.delete(
-                f"{self.endpoint}/checkpoints/{content_hash}"
+            request = HttpRequestSpec(
+                url=f"{self.endpoint}/checkpoints/{content_hash}",
+                method="DELETE"
             )
+            response = await self.http_client.execute_request(request)
             
-            if response.status_code not in (200, 204):
+            if response.status not in (200, 204):
                 raise ValueError(
-                    f"Failed to clear checkpoint: {response.status_code}"
+                    f"Failed to clear checkpoint: {response.status}"
                 )
-                
+            
             self.logger.log_info(f"Checkpoint cleared: {content_hash}")
             
         except Exception as e:
