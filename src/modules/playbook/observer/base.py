@@ -13,7 +13,7 @@ class ExecutionObserver(ABC):
     """Base class for execution observers."""
     
     @abstractmethod
-    def on_playbook_start(self, event: PlaybookStartEvent, context_id: str) -> None:
+    def on_playbook_start(self, event: PlaybookStartEvent) -> None:
         """Handle playbook start event.
         
         Args:
@@ -23,7 +23,7 @@ class ExecutionObserver(ABC):
         pass
     
     @abstractmethod
-    def on_playbook_end(self, event: PlaybookEndEvent, context_id: str) -> None:
+    def on_playbook_end(self, event: PlaybookEndEvent) -> None:
         """Handle playbook end event.
         
         Args:
@@ -33,7 +33,7 @@ class ExecutionObserver(ABC):
         pass
     
     @abstractmethod
-    def on_phase_start(self, event: PhaseStartEvent, context_id: str) -> None:
+    def on_phase_start(self, event: PhaseStartEvent) -> None:
         """Handle phase start event.
         
         Args:
@@ -43,7 +43,7 @@ class ExecutionObserver(ABC):
         pass
     
     @abstractmethod
-    def on_phase_end(self, event: PhaseEndEvent, context_id: str) -> None:
+    def on_phase_end(self, event: PhaseEndEvent) -> None:
         """Handle phase end event.
         
         Args:
@@ -53,7 +53,7 @@ class ExecutionObserver(ABC):
         pass
     
     @abstractmethod
-    def on_step_start(self, event: StepStartEvent, context_id: str) -> None:
+    def on_step_start(self, event: StepStartEvent) -> None:
         """Handle step start event.
         
         Args:
@@ -63,7 +63,7 @@ class ExecutionObserver(ABC):
         pass
     
     @abstractmethod
-    def on_step_end(self, event: StepEndEvent, context_id: str) -> None:
+    def on_step_end(self, event: StepEndEvent) -> None:
         """Handle step end event.
         
         Args:
@@ -73,7 +73,7 @@ class ExecutionObserver(ABC):
         pass
     
     @abstractmethod
-    def on_request_start(self, event: RequestStartEvent, context_id: str) -> None:
+    def on_request_start(self, event: RequestStartEvent) -> None:
         """Handle request start event.
         
         Args:
@@ -83,7 +83,7 @@ class ExecutionObserver(ABC):
         pass
     
     @abstractmethod
-    def on_request_end(self, event: RequestEndEvent, context_id: str) -> None:
+    def on_request_end(self, event: RequestEndEvent) -> None:
         """Handle request end event.
         
         Args:

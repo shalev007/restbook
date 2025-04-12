@@ -1,5 +1,4 @@
 import asyncio
-import uuid
 import aiohttp
 import time
 import json
@@ -35,7 +34,6 @@ class RequestExecutionMetadata(BaseModel):
     """Metadata about a request execution."""
     method: str
     url: str
-    request_uuid: str
     start_time: datetime
     end_time: Optional[datetime] = None
     retry_count: int = 0
@@ -83,13 +81,6 @@ class ResilientHttpClient:
         self.circuit_breaker = circuit_breaker  # Allow it to be None
         self.session_cache = session_cache or AioSessionCache()
         self._last_request_metadata: Optional[RequestExecutionMetadata] = None
-        self._request_uuid: str = ""
-
-    def get_request_uuid(self) -> str:
-        """Get the unique identifier for the request."""
-        if not self._request_uuid:
-            self._request_uuid = str(uuid.uuid4())
-        return self._request_uuid
 
     def get_last_request_execution_metadata(self) -> Optional[RequestExecutionMetadata]:
         """Get metadata about the last request execution.
@@ -134,7 +125,6 @@ class ResilientHttpClient:
         self._last_request_metadata = RequestExecutionMetadata(
             method=request_params.method,
             url=request_params.url,
-            request_uuid=self.get_request_uuid(),
             start_time=datetime.now(),
             headers=request_params.headers,
             params=request_params.params,
@@ -297,7 +287,6 @@ class ResilientHttpClient:
         finally:
             # Always close the session after execution
             await self.session_cache.close()
-            self._request_uuid = ""
 
     async def _build_request_params(self, request_params: RequestParams) -> Dict[str, Any]:
         """Build the request parameters for the request.

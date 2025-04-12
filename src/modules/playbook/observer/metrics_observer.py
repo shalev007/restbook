@@ -163,14 +163,14 @@ class MetricsObserver(ExecutionObserver):
         """Get size of an object in bytes."""
         return self.collector.get_object_size(obj)
     
-    def on_playbook_start(self, event: PlaybookStartEvent, context_id: str) -> None:
+    def on_playbook_start(self, event: PlaybookStartEvent) -> None:
         """Handle playbook start event."""
         self._active_playbook = PlaybookContext(
             start_time=event.timestamp,
             initial_memory=self.get_memory_usage()
         )
     
-    def on_playbook_end(self, event: PlaybookEndEvent, context_id: str) -> None:
+    def on_playbook_end(self, event: PlaybookEndEvent) -> None:
         """Handle playbook end event."""
         if self._active_playbook is None:
             return
@@ -204,20 +204,20 @@ class MetricsObserver(ExecutionObserver):
         self.collector.record_playbook(playbook_metrics)
         self.collector.finalize()
     
-    def on_phase_start(self, event: PhaseStartEvent, context_id: str) -> None:
+    def on_phase_start(self, event: PhaseStartEvent) -> None:
         """Handle phase start event."""
         context = PhaseContext(
-            id=context_id,
+            id=event.id,
             name=event.phase_name,
             start_time=event.timestamp,
             initial_memory=self.get_memory_usage(),
             initial_cpu=self.get_cpu_usage()
         )
-        self._active_phases[context_id] = context
+        self._active_phases[event.id] = context
     
-    def on_phase_end(self, event: PhaseEndEvent, context_id: str) -> None:
+    def on_phase_end(self, event: PhaseEndEvent) -> None:
         """Handle phase end event."""
-        phase = self._active_phases.pop(context_id)
+        phase = self._active_phases.pop(event.id)
         memory_after = self.get_memory_usage()
         cpu_after = self.get_cpu_usage()
         
@@ -237,38 +237,41 @@ class MetricsObserver(ExecutionObserver):
         
         self.collector.record_phase(metrics)
     
-    def on_step_start(self, event: StepStartEvent, context_id: str) -> None:
+    def on_step_start(self, event: StepStartEvent) -> None:
         """Handle step start event."""
         context = StepContext(
-            id=context_id,
+            id=event.id,
             step_index=event.step_index,
             session=event.session,
             start_time=event.timestamp,
-            phase_id=event.phase_context_id,
+            phase_id=event.phase_id,
             initial_memory=self.get_memory_usage(),
             initial_cpu=self.get_cpu_usage()
         )
-        self._active_steps[context_id] = context
+        self._active_steps[event.id] = context
     
-    def on_step_end(self, event: StepEndEvent, context_id: str) -> None:
+    def on_step_end(self, event: StepEndEvent) -> None:
         """Handle step end event."""
-        step = self._active_steps.pop(context_id)
+        step = self._active_steps.pop(event.id)
         phase = self._active_phases[step.phase_id]
         memory_after = self.get_memory_usage()
         cpu_after = self.get_cpu_usage()
         
         # Calculate variable sizes
         variable_sizes = {}
-        for var_name, var_value in event.store_vars.items():
-            size = self.get_object_size(var_value)
-            variable_sizes[var_name] = size
-            self._request_counts.total_variable_size += size
+        var_names = []
+        for store_result in event.store_results:
+            for var_name, var_value in store_result.items():
+                size = self.get_object_size(var_value)
+                variable_sizes[var_name] = size
+                var_names.append(var_name)
+                self._request_counts.total_variable_size += size
         
         # Create metrics with non-negative memory and CPU values
         metrics = StepMetrics(
             session=step.session,
             retry_count=event.retry_count,
-            store_vars=list(event.store_vars.keys()),
+            store_vars=var_names,
             variable_sizes=variable_sizes,
             memory_usage_bytes=max(0, memory_after - step.initial_memory),
             cpu_percent=max(0, cpu_after - step.initial_cpu),
@@ -278,10 +281,10 @@ class MetricsObserver(ExecutionObserver):
         
         self.collector.record_step(metrics)
     
-    def on_request_start(self, event: RequestStartEvent, context_id: str) -> None:
+    def on_request_start(self, event: RequestStartEvent) -> None:
         """Handle request start event."""
         context = RequestContext(
-            id=context_id,
+            id=event.id,
             method=event.method,
             endpoint=event.endpoint,
             start_time=event.timestamp,
@@ -289,11 +292,11 @@ class MetricsObserver(ExecutionObserver):
             initial_memory=self.get_memory_usage(),
             initial_cpu=self.get_cpu_usage()
         )
-        self._active_requests[context_id] = context
+        self._active_requests[event.id] = context
     
-    def on_request_end(self, event: RequestEndEvent, context_id: str) -> None:
+    def on_request_end(self, event: RequestEndEvent) -> None:
         """Handle request end event."""
-        request = self._active_requests.pop(context_id)
+        request = self._active_requests.pop(event.id)
         memory_after = self.get_memory_usage()
         cpu_after = self.get_cpu_usage()
         step = self._active_steps[request.step_id]

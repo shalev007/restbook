@@ -14,21 +14,24 @@ class PlaybookEvent(ExecutionEvent):
 
 class PhaseEvent(ExecutionEvent):
     """Base class for phase-level events."""
-    def __init__(self, phase_name: str, timestamp: Optional[datetime] = None):
+    def __init__(self, id: str, phase_name: str, timestamp: Optional[datetime] = None):
         super().__init__(timestamp)
+        self.id = id
         self.phase_name = phase_name
 
 class StepEvent(ExecutionEvent):
     """Base class for step-level events."""
-    def __init__(self, step_index: int, session: str, timestamp: Optional[datetime] = None):
+    def __init__(self, id: str, step_index: int, session: str, timestamp: Optional[datetime] = None):
         super().__init__(timestamp)
+        self.id = id
         self.step_index = step_index
         self.session = session
 
 class RequestEvent(ExecutionEvent):
     """Base class for request-level events."""
-    def __init__(self, method: str, endpoint: str, timestamp: Optional[datetime] = None):
+    def __init__(self, id: str, method: str, endpoint: str, timestamp: Optional[datetime] = None):
         super().__init__(timestamp)
+        self.id = id
         self.method = method
         self.endpoint = endpoint
 
@@ -47,43 +50,44 @@ class PhaseStartEvent(PhaseEvent):
 
 class PhaseEndEvent(PhaseEvent):
     """Event emitted when a phase ends execution."""
-    def __init__(self, phase_name: str, parallel: bool, timestamp: Optional[datetime] = None):
-        super().__init__(phase_name, timestamp)
+    def __init__(self, id: str, phase_name: str, parallel: bool, timestamp: Optional[datetime] = None):
+        super().__init__(id, phase_name, timestamp)
         self.parallel = parallel
 
 class StepStartEvent(StepEvent):
     """Event emitted when a step starts execution."""
-    def __init__(self, phase_context_id: str, step_index: int, session: str, timestamp: Optional[datetime] = None):
-        super().__init__(step_index, session, timestamp)
-        self.phase_context_id = phase_context_id
+    def __init__(self, id: str, phase_id: str, step_index: int, session: str, timestamp: Optional[datetime] = None):
+        super().__init__(id, step_index, session, timestamp)
+        self.phase_id = phase_id
 
 class StepEndEvent(StepEvent):
     """Event emitted when a step ends execution."""
     def __init__(
         self,
+        id: str,
         step_index: int,
         session: str,
         retry_count: int,
-        store_vars: Dict[str, Any],
+        store_results: List[Dict[str, Any]],
         timestamp: Optional[datetime] = None
     ):
-        super().__init__(step_index, session, timestamp)
+        super().__init__(id, step_index, session, timestamp)
         self.retry_count = retry_count
-        self.store_vars = store_vars
+        self.store_results = store_results
 
 class RequestStartEvent(RequestEvent):
     """Event emitted when a request starts execution."""
-    def __init__(self, step_id: str, method: str, endpoint: str, request_uuid: str, timestamp: Optional[datetime] = None):
-        super().__init__(method, endpoint, timestamp)
+    def __init__(self, id: str, step_id: str, method: str, endpoint: str, timestamp: Optional[datetime] = None):
+        super().__init__(id, method, endpoint, timestamp)
         self.step_id = step_id
-        self.request_uuid = request_uuid
+
 class RequestEndEvent(RequestEvent):
     """Event emitted when a request ends execution."""
     def __init__(
         self,
+        id: str,
         method: str,
         endpoint: str,
-        request_uuid: str,
         status_code: int,
         success: bool,
         error: Optional[str],
@@ -92,11 +96,10 @@ class RequestEndEvent(RequestEvent):
         response_size_bytes: Optional[int],
         timestamp: Optional[datetime] = None
     ):
-        super().__init__(method, endpoint, timestamp)
+        super().__init__(id, method, endpoint, timestamp)
         self.status_code = status_code
         self.success = success
         self.error = error
         self.errors = errors
         self.request_size_bytes = request_size_bytes
         self.response_size_bytes = response_size_bytes 
-        self.request_uuid = request_uuid
