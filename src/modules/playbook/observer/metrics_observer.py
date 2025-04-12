@@ -27,31 +27,9 @@ class RequestCounters:
     total_variable_size: int = 0
 
 @dataclass
-class ResourceUsageTracker:
-    """Tracks resource usage metrics."""
-    peak_memory: int = 0
-    cpu_measurements: List[float] = field(default_factory=list)
-    
-    def update_memory(self, current: Optional[int]) -> None:
-        """Update peak memory usage."""
-        if current is not None:
-            self.peak_memory = max(self.peak_memory, current)
-            
-    def add_cpu_measurement(self, cpu: Optional[float]) -> None:
-        """Add a CPU measurement."""
-        if cpu is not None:
-            self.cpu_measurements.append(cpu)
-            
-    def get_average_cpu(self) -> Optional[float]:
-        """Calculate average CPU usage."""
-        return (sum(self.cpu_measurements) / len(self.cpu_measurements)
-                if self.cpu_measurements else None)
-
-@dataclass
 class PlaybookContext:
     """Tracks playbook-level context."""
     start_time: datetime
-    initial_memory: int = 0
 
 @dataclass
 class PhaseContext:
@@ -60,8 +38,6 @@ class PhaseContext:
     name: str
     start_time: datetime
     step_ids: Set[str] = field(default_factory=set)
-    initial_memory: int = 0
-    initial_cpu: float = 0
 
 @dataclass
 class StepContext:
@@ -72,8 +48,6 @@ class StepContext:
     start_time: datetime
     phase_id: str
     request_ids: Set[str] = field(default_factory=set)
-    initial_memory: int = 0
-    initial_cpu: float = 0
 
 @dataclass
 class RequestContext:
@@ -83,8 +57,6 @@ class RequestContext:
     endpoint: str
     start_time: datetime
     step_id: str
-    initial_memory: int = 0
-    initial_cpu: float = 0
 
     def end(self, 
             end_time: datetime,
@@ -93,23 +65,9 @@ class RequestContext:
             error: Optional[str] = None,
             errors: Optional[List[str]] = None,
             request_size_bytes: Optional[int] = None,
-            response_size_bytes: Optional[int] = None,
-            memory_after: Optional[int] = None,
-            cpu_after: Optional[float] = None) -> RequestMetrics:
+            response_size_bytes: Optional[int] = None) -> RequestMetrics:
         """Create RequestMetrics from this context."""
         duration_ms = (end_time - self.start_time).total_seconds() * 1000
-        
-        memory_usage = (
-            memory_after - self.initial_memory 
-            if self.initial_memory is not None and memory_after is not None 
-            else None
-        )
-        
-        cpu_usage = (
-            max(0, cpu_after - self.initial_cpu) 
-            if self.initial_cpu is not None and cpu_after is not None 
-            else None
-        )
         
         # Convert step_id to step number if available
         step_number = None
@@ -131,10 +89,9 @@ class RequestContext:
             errors=errors or [],
             request_size_bytes=request_size_bytes,
             response_size_bytes=response_size_bytes,
-            memory_usage_bytes=memory_usage,
-            cpu_percent=cpu_usage,
             step=step_number
         )
+
 class MetricsObserver(ExecutionObserver):
     """Metrics-specific implementation of execution observer."""
     
@@ -147,17 +104,8 @@ class MetricsObserver(ExecutionObserver):
         self._active_steps: Dict[str, StepContext] = {}
         self._active_requests: Dict[str, RequestContext] = {}
         
-        # Counters and trackers
+        # Counters
         self._request_counts = RequestCounters()
-        self._resource_usage = ResourceUsageTracker()
-    
-    def get_memory_usage(self) -> int:
-        """Get current memory usage in bytes."""
-        return self.collector.get_memory_usage()
-    
-    def get_cpu_usage(self) -> float:
-        """Get current CPU usage percentage."""
-        return self.collector.get_cpu_usage()
     
     def get_object_size(self, obj: Any) -> int:
         """Get size of an object in bytes."""
@@ -166,8 +114,7 @@ class MetricsObserver(ExecutionObserver):
     def on_playbook_start(self, event: PlaybookStartEvent) -> None:
         """Handle playbook start event."""
         self._active_playbook = PlaybookContext(
-            start_time=event.timestamp,
-            initial_memory=self.get_memory_usage()
+            start_time=event.timestamp
         )
     
     def on_playbook_end(self, event: PlaybookEndEvent) -> None:
@@ -175,14 +122,6 @@ class MetricsObserver(ExecutionObserver):
         if self._active_playbook is None:
             return
             
-        # Get final memory usage and calculate peak
-        final_memory = self.get_memory_usage()
-        if self._active_playbook.initial_memory is not None and final_memory is not None:
-            self._resource_usage.peak_memory = max(self._active_playbook.initial_memory, final_memory)
-        
-        # Calculate average CPU usage
-        average_cpu_percent = self._resource_usage.get_average_cpu()
-        
         # Record playbook metrics
         playbook_duration_ms = (event.timestamp - self._active_playbook.start_time).total_seconds() * 1000
         
@@ -194,8 +133,6 @@ class MetricsObserver(ExecutionObserver):
             successful_requests=self._request_counts.successful,
             failed_requests=self._request_counts.failed,
             total_duration_ms=playbook_duration_ms,
-            peak_memory_usage_bytes=self._resource_usage.peak_memory,
-            average_cpu_percent=average_cpu_percent,
             total_request_size_bytes=self._request_counts.total_request_size,
             total_response_size_bytes=self._request_counts.total_response_size,
             total_variable_size_bytes=self._request_counts.total_variable_size
@@ -209,20 +146,13 @@ class MetricsObserver(ExecutionObserver):
         context = PhaseContext(
             id=event.id,
             name=event.phase_name,
-            start_time=event.timestamp,
-            initial_memory=self.get_memory_usage(),
-            initial_cpu=self.get_cpu_usage()
+            start_time=event.timestamp
         )
         self._active_phases[event.id] = context
     
     def on_phase_end(self, event: PhaseEndEvent) -> None:
         """Handle phase end event."""
         phase = self._active_phases.pop(event.id)
-        memory_after = self.get_memory_usage()
-        cpu_after = self.get_cpu_usage()
-        
-        # Calculate memory usage, ensuring it's never negative
-        memory_usage = max(0, memory_after - phase.initial_memory)
         
         # Create metrics
         metrics = PhaseMetrics(
@@ -230,9 +160,7 @@ class MetricsObserver(ExecutionObserver):
             start_time=phase.start_time,
             end_time=event.timestamp,
             duration_ms=(event.timestamp - phase.start_time).total_seconds() * 1000,
-            parallel=event.parallel,
-            memory_usage_bytes=memory_usage,
-            cpu_percent=max(0, cpu_after - phase.initial_cpu)
+            parallel=event.parallel
         )
         
         self.collector.record_phase(metrics)
@@ -244,9 +172,7 @@ class MetricsObserver(ExecutionObserver):
             step_index=event.step_index,
             session=event.session,
             start_time=event.timestamp,
-            phase_id=event.phase_id,
-            initial_memory=self.get_memory_usage(),
-            initial_cpu=self.get_cpu_usage()
+            phase_id=event.phase_id
         )
         self._active_steps[event.id] = context
     
@@ -254,8 +180,6 @@ class MetricsObserver(ExecutionObserver):
         """Handle step end event."""
         step = self._active_steps.pop(event.id)
         phase = self._active_phases[step.phase_id]
-        memory_after = self.get_memory_usage()
-        cpu_after = self.get_cpu_usage()
         
         # Calculate variable sizes
         variable_sizes = {}
@@ -267,13 +191,11 @@ class MetricsObserver(ExecutionObserver):
                 var_names.append(var_name)
                 self._request_counts.total_variable_size += size
         
-        # Create metrics with non-negative memory and CPU values
+        # Create metrics
         metrics = StepMetrics(
             session=step.session,
             store_vars=var_names,
             variable_sizes=variable_sizes,
-            memory_usage_bytes=max(0, memory_after - step.initial_memory),
-            cpu_percent=max(0, cpu_after - step.initial_cpu),
             step=step.step_index,
             phase=phase.name
         )
@@ -287,21 +209,17 @@ class MetricsObserver(ExecutionObserver):
             method=event.method,
             endpoint=event.endpoint,
             start_time=event.timestamp,
-            step_id=event.step_id,
-            initial_memory=self.get_memory_usage(),
-            initial_cpu=self.get_cpu_usage()
+            step_id=event.step_id
         )
         self._active_requests[event.id] = context
     
     def on_request_end(self, event: RequestEndEvent) -> None:
         """Handle request end event."""
         request = self._active_requests.pop(event.id)
-        memory_after = self.get_memory_usage()
-        cpu_after = self.get_cpu_usage()
         step = self._active_steps[request.step_id]
         phase = self._active_phases[step.phase_id]
         
-        # Create metrics with non-negative memory and CPU values
+        # Create metrics
         metrics = RequestMetrics(
             method=request.method,
             endpoint=request.endpoint,
@@ -314,17 +232,9 @@ class MetricsObserver(ExecutionObserver):
             errors=event.errors or [],
             request_size_bytes=event.request_size_bytes,
             response_size_bytes=event.response_size_bytes,
-            memory_usage_bytes=max(0, memory_after - request.initial_memory),
-            cpu_percent=max(0, cpu_after - request.initial_cpu),
             step=step.step_index,
             phase=phase.name
         )
-        
-        # Update resource usage with non-negative values
-        if metrics.memory_usage_bytes is not None:
-            self._resource_usage.update_memory(metrics.memory_usage_bytes)
-        if metrics.cpu_percent is not None:
-            self._resource_usage.add_cpu_measurement(metrics.cpu_percent)
         
         # Update request counts
         if event.request_size_bytes is not None:

@@ -5,7 +5,6 @@ from typing import Dict, List, Optional, Any, Union
 import json
 import sys
 import os
-import psutil
 
 @dataclass
 class RequestMetrics:
@@ -21,8 +20,6 @@ class RequestMetrics:
     errors: List[str] = field(default_factory=list)  # All errors encountered during the request
     request_size_bytes: Optional[int] = None  # Size of request payload in bytes
     response_size_bytes: Optional[int] = None  # Size of response payload in bytes
-    memory_usage_bytes: Optional[int] = None  # Memory usage during request in bytes
-    cpu_percent: Optional[float] = None  # CPU usage during request as percentage
     step: Optional[int] = None
     phase: Optional[str] = None
 
@@ -32,10 +29,9 @@ class StepMetrics:
     session: str
     store_vars: List[str] = field(default_factory=list)
     variable_sizes: Dict[str, int] = field(default_factory=dict)  # Size of stored variables in bytes
-    memory_usage_bytes: Optional[int] = None  # Memory usage during step in bytes
-    cpu_percent: Optional[float] = None  # CPU usage during step as percentage
     phase: Optional[str] = None
     step: Optional[int] = None
+
 @dataclass
 class PhaseMetrics:
     """Metrics for a single phase."""
@@ -44,8 +40,6 @@ class PhaseMetrics:
     end_time: datetime
     duration_ms: float
     parallel: bool = False
-    memory_usage_bytes: Optional[int] = None  # Memory usage during phase in bytes
-    cpu_percent: Optional[float] = None  # CPU usage during phase as percentage
 
 @dataclass
 class PlaybookMetrics:
@@ -57,8 +51,6 @@ class PlaybookMetrics:
     successful_requests: int = 0
     failed_requests: int = 0
     total_duration_ms: float = 0.0
-    peak_memory_usage_bytes: Optional[int] = None  # Peak memory usage during playbook in bytes
-    average_cpu_percent: Optional[float] = None  # Average CPU usage during playbook as percentage
     total_request_size_bytes: Optional[int] = None  # Total size of all request payloads in bytes
     total_response_size_bytes: Optional[int] = None  # Total size of all response payloads in bytes
     total_variable_size_bytes: Optional[int] = None  # Total size of all stored variables in bytes
@@ -90,22 +82,6 @@ class MetricsCollector(ABC):
     def finalize(self) -> None:
         """Finalize metrics collection."""
         pass
-    
-    @staticmethod
-    def get_memory_usage() -> int:
-        """Get current memory usage in bytes."""
-        process = psutil.Process(os.getpid())
-        # Use memory_info().rss for resident set size, which is more stable than memory_info().vms
-        # Also ensure we never return negative values
-        return max(0, process.memory_info().rss)
-    
-    @staticmethod
-    def get_cpu_usage() -> float:
-        """Get current CPU usage as percentage."""
-        process = psutil.Process(os.getpid())
-        # Use interval=0.1 to get a more accurate measurement
-        # Also ensure we never return negative values
-        return max(0.0, process.cpu_percent(interval=0.1))
     
     @staticmethod
     def get_object_size(obj: Any) -> int:
