@@ -113,7 +113,7 @@ class Playbook:
                 self.logger.log_info(f"Executing phase {phase.index}: {phase.name}")
                 
                 # Start metrics collection for the phase
-                self._notify_observers(PhaseStartEvent(phase.id, phase.name))
+                self._notify_observers(PhaseStartEvent(phase))
                 
                 try:
                     if phase.parallel:
@@ -160,11 +160,11 @@ class Playbook:
                             )
                     
                     # End metrics collection for the phase
-                    self._notify_observers(PhaseEndEvent(phase.id, phase.name, bool(phase.parallel)))
+                    self._notify_observers(PhaseEndEvent(phase))
                 except Exception as e:
                     # Clean up the phase metrics context in case of error
                     try:
-                        self._notify_observers(PhaseEndEvent(phase.id, phase.name, bool(phase.parallel)))
+                        self._notify_observers(PhaseEndEvent(phase))
                     except Exception:
                         pass
                     raise
@@ -199,7 +199,7 @@ class Playbook:
         step = StepContext(phase_context_id, step_index, step_config, session)
         
         # Start metrics collection for the step
-        self._notify_observers(StepStartEvent(step.id, step.phase_id, step.index, step.session.name))
+        self._notify_observers(StepStartEvent(step))
         try:
             if step.iterate:
                 # Parse iteration configuration
@@ -265,13 +265,7 @@ class Playbook:
         # End metrics collection for the step
         # Create dictionary of variable names to values
         
-        self._notify_observers(StepEndEvent(
-            id=step.id,
-            step_index=step.index,
-            session=step.session.name,
-            retry_count=0,  # This would need to be tracked in the request execution
-            store_results=step.store_results
-        ))
+        self._notify_observers(StepEndEvent(step))
 
     async def _execute_single_step(self, context: StepContext, override_config: StepConfig | None = None) -> None:
         """
@@ -337,12 +331,7 @@ class Playbook:
 
         request_context = RequestContext(step_id=context.id, config=step.request)
         # Start metrics collection for the request
-        self._notify_observers(RequestStartEvent(
-            id=request_context.id,
-            step_id=request_context.step_id,
-            method=request_context.config.method.value,
-            endpoint=request_context.config.endpoint,
-        ))
+        self._notify_observers(RequestStartEvent(request_context))
         
         try:
             # Execute request
@@ -377,17 +366,8 @@ class Playbook:
             # Get request metadata and end metrics collection
             metadata = client.get_last_request_execution_metadata()
             if metadata:
-                self._notify_observers(RequestEndEvent(
-                    id=request_context.id,
-                    method=request_context.config.method.value,
-                    endpoint=request_context.config.endpoint,
-                    status_code=metadata.status_code or 0,
-                    success=metadata.success or False,
-                    error=metadata.errors[-1] if metadata.errors else None,
-                    errors=metadata.errors,
-                    request_size_bytes=metadata.request_size_bytes,
-                    response_size_bytes=metadata.response_size_bytes
-                ))
+                self._notify_observers(RequestEndEvent(request_context, metadata))
+
 
     def _convert_to_executor_config(self, playbook_config: RequestConfig) -> RequestParams:
         """Convert a playbook request config to an executor request config.

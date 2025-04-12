@@ -30,7 +30,6 @@ class RequestMetrics:
 class StepMetrics:
     """Metrics for a single step."""
     session: str
-    retry_count: int = 0
     store_vars: List[str] = field(default_factory=list)
     variable_sizes: Dict[str, int] = field(default_factory=dict)  # Size of stored variables in bytes
     memory_usage_bytes: Optional[int] = None  # Memory usage during step in bytes

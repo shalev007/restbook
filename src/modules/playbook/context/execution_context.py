@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import uuid
 from typing import List, Dict, Any
 
@@ -25,6 +25,7 @@ class StepContext:
     index: int
     config: StepConfig
     session: Session
+    store_results: List[Dict[str, Any]] = field(default_factory=list)
     
     def __post_init__(self):
         self.id = str(uuid.uuid4())
@@ -33,8 +34,6 @@ class StepContext:
         self.store = self.config.store
         self.on_error = self.config.on_error
         self.request = self.config.request
-        self.store_results: List[Dict[str, Any]] = []
-        self.requests: List[RequestContext] = []
 
 @dataclass
 class RequestContext:

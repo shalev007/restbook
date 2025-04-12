@@ -270,7 +270,6 @@ class MetricsObserver(ExecutionObserver):
         # Create metrics with non-negative memory and CPU values
         metrics = StepMetrics(
             session=step.session,
-            retry_count=event.retry_count,
             store_vars=var_names,
             variable_sizes=variable_sizes,
             memory_usage_bytes=max(0, memory_after - step.initial_memory),
