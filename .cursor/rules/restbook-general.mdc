@@ -1,0 +1,79 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+---
+description: Architecture, code quality, and best practices for RestBook – a modular, testable Python CLI for REST workflow orchestration
+globs: **/*.py, src/**/*.py, tests/**/*.py
+---
+
+# RestBook Python Project Standards
+
+## Filesystem & Structure
+- Use `src/` layout with core logic under `src/modules/`
+- Keep all user entrypoints (CLI, app init) under `src/main.py`
+- Documentation lives under `docs/` (GitHub Pages via Jekyll)
+- Example playbooks are in `examples/` and must cover core features
+- Unit tests mirror `src/` under `tests/unit/`
+- Integration tests (end-to-end) mirror `src/` under `tests/integration/`
+- Shared test utilities go in `tests/utils/`
+
+## Code Style
+- Follow Black formatting (88 character lines)
+- Use isort for consistent imports
+- PEP 8 naming conventions:
+  - `snake_case` for functions and variables
+  - `PascalCase` for classes and Enums
+  - `UPPER_CASE` for constants
+- Use absolute imports within `src.modules`, avoid relative ones
+
+## Typing & Models
+- All config/data classes must inherit from `pydantic.BaseModel`
+- Avoid `Any`; prefer strict types, `Literal`, or `TypedDict`
+- Use `Field(...)` for required fields with metadata
+- Use `Enum` instead of magic strings (e.g. `AuthType`, `MethodConfig`)
+- Type all function parameters and return values
+- Prefer `Optional[T]` over `Union[T, None]`
+- Use `@model_validator(mode='after')` for inter-field validation
+- Validator method names must be prefixed with `validate_`
+
+## Modular Design
+- Keep orchestration logic in `playbook/`, requests in `request/`, and sessions in `session/`
+- Use factories (e.g., `client_factory.py`, `metrics/factory.py`) for DI-friendly instantiation
+- Observers, metrics clients, and checkpoint backends must be pluggable
+- Avoid tightly coupling business logic across modules
+- CLI commands go under `command/` inside their respective domain
+
+## Testing
+- Unit tests use mocks and DI — no I/O or network
+- Integration tests load full YAML playbooks and execute steps
+- Use pytest and match test structure to `src/`
+- Avoid mixing unit and integration logic
+- Use `pytest.ini` and `conftest.py` for shared fixtures and config
+- Mock HTTP and auth for fast, reliable test runs
+
+## CLI & Interactive
+- Interactive CLI is implemented with `Click` or `prompt_toolkit`
+- Commands must call orchestrators, not contain business logic
+- Commands must support auto-completion and prompt defaults
+- Use `restbook run` style commands, support `--from-file`, `--session`, etc.
+
+## Documentation & Developer UX
+- Every public model and CLI command must be documented
+- Each new config field must be reflected in `docs/playbook-structure.md`
+- Jekyll docs must be kept in sync with feature changes
+- Playbook examples must reflect retry, metrics, incremental, and auth flows
+
+## Stability & Hardening
+- All retries and circuit breakers must be configured, not hardcoded
+- Use `timeout` and `on_error` consistently across steps
+- Handle Ctrl+C or CLI interruption with graceful shutdown
+- Validate checkpoint file integrity before resuming playbooks
+- Don’t mutate state during retries or parallel execution
+
+## Extensibility & Plugins
+- All observers, metrics, session strategies, and checkpoint backends should register via factory patterns
+- Allow 3rd-party plugins to be registered without modifying core
+- Future macro or record mode logic must be isolated in its own module
+
