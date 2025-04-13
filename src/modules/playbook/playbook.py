@@ -1,10 +1,9 @@
 import json
 from typing import Dict, Any, Optional, List
 import asyncio
-import uuid
 
 from .config import (
-    PlaybookConfig, StepConfig, RequestConfig, RetryConfig
+    PlaybookConfig, StepConfig
 )
 from .validator import PlaybookYamlValidator
 from .template_renderer import TemplateRenderer
@@ -63,7 +62,7 @@ class Playbook:
         self.client_factory = client_factory
 
     @classmethod
-    def create(cls, config: PlaybookConfig, logger: BaseLogger) -> 'Playbook':
+    def create(cls, config: PlaybookConfig, logger: BaseLogger, session_store: SessionStore) -> 'Playbook':
         """
         Factory method to create a Playbook instance with default dependencies.
         
@@ -77,8 +76,8 @@ class Playbook:
         variables = VariableManager(logger)
         renderer = TemplateRenderer(logger)
         config_renderer = ConfigRenderer(renderer, variables)
-        checkpoint_manager = CheckpointManager(config, logger)
-        session_manager = SessionManager(config_renderer, logger)
+        session_manager = SessionManager(config_renderer, logger, session_store)
+        checkpoint_manager = CheckpointManager(config, logger, session_manager)
         observer_manager = ObserverManager(config, logger)
         client_factory = ResilientHttpClientFactory(logger)
         
@@ -95,7 +94,7 @@ class Playbook:
         )
 
     @classmethod
-    def from_yaml(cls, yaml_content: str, logger: BaseLogger) -> 'Playbook':
+    def from_yaml(cls, yaml_content: str, logger: BaseLogger, session_store: SessionStore) -> 'Playbook':
         """
         Create a Playbook instance from YAML content.
         
@@ -110,7 +109,7 @@ class Playbook:
             ValueError: If the YAML content is invalid
         """
         config = PlaybookYamlValidator.validate_and_load(yaml_content)
-        return cls.create(config, logger)
+        return cls.create(config, logger, session_store)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the playbook to a dictionary."""
@@ -231,7 +230,7 @@ class Playbook:
             step_index: Index of the step in the phase
             session_store: Session store for retrieving sessions
         """
-        session = self.session_manager.get_session(step_config.session, session_store)
+        session = self.session_manager.get_session(step_config.session)
         step = StepContext(phase_context_id, step_index, step_config, session)
         
         # Start metrics collection for the step

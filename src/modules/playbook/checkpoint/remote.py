@@ -1,6 +1,6 @@
 from typing import Optional
 from ..config import IncrementalConfig
-from ...session.session_store import SessionStore
+from ...session.session_provider import SessionProvider
 from .base import CheckpointStore, CheckpointData
 from ...logging import BaseLogger
 from ...request.resilient_http_client import ResilientHttpClient, ResilientHttpClientConfig, HttpRequestSpec
@@ -8,7 +8,12 @@ from ...request.resilient_http_client import ResilientHttpClient, ResilientHttpC
 class RemoteCheckpointStore(CheckpointStore):
     """Remote implementation of checkpoint storage using a session."""
     
-    def __init__(self, config: IncrementalConfig, session_store: SessionStore, logger: BaseLogger):
+    def __init__(
+        self, 
+        config: IncrementalConfig, 
+        session_provider: SessionProvider, 
+        logger: BaseLogger
+    ):
         super().__init__(config)
         self.logger = logger
         
@@ -17,7 +22,7 @@ class RemoteCheckpointStore(CheckpointStore):
         if not config.endpoint:
             raise ValueError("endpoint is required for remote checkpoint store")
             
-        self.session = session_store.get_session(config.session)
+        self.session = session_provider.get_session(config.session)
         self.endpoint = config.endpoint.rstrip('/')
         
         # Initialize the resilient HTTP client

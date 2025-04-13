@@ -1,6 +1,6 @@
 from typing import Optional
 
-from src.modules.session.session_store import SessionStore
+from src.modules.session.session_provider import SessionProvider
 from src.modules.logging import BaseLogger
 
 from .file import FileCheckpointStore
@@ -10,7 +10,7 @@ from .base import CheckpointStore
 
 def create_checkpoint_store(
     config: IncrementalConfig,
-    session_store: SessionStore,
+    session_provider: SessionProvider,
     logger: BaseLogger
 ) -> Optional[CheckpointStore]:
     """
@@ -28,6 +28,6 @@ def create_checkpoint_store(
         return None
         
     if config.store == IncrementalStoreType.REMOTE:
-        return RemoteCheckpointStore(config, session_store, logger)
+        return RemoteCheckpointStore(config, session_provider, logger)
     else:
         return FileCheckpointStore(config) 

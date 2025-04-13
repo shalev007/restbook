@@ -2,8 +2,8 @@ import asyncio
 import sys
 import requests
 from typing import Optional, TextIO
-from ...logging import BaseLogger
-from ...session.session_store import SessionStore
+from src.modules.logging import BaseLogger
+from src.modules.session.session_store import SessionStore
 from ..playbook import Playbook
 from croniter import croniter
 import time
@@ -87,7 +87,7 @@ class RunCommand:
         try:
             # Read and parse the playbook
             content = self._read_playbook_content(playbook_file)
-            playbook = Playbook.from_yaml(content, logger=self.logger)
+            playbook = Playbook.from_yaml(content, logger=self.logger, session_store=self.session_store)
             
             # Configure playbook settings
             self._configure_playbook(playbook, no_resume)
