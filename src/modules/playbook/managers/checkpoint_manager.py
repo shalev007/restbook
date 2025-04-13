@@ -5,27 +5,34 @@ import json
 from ..checkpoint import CheckpointStore, CheckpointData, create_checkpoint_store
 from ..config import PlaybookConfig
 from ...logging import BaseLogger
+from ...session.session_provider import SessionProvider
 
 class CheckpointManager:
     """Manages checkpoint functionality for playbook execution."""
     
-    def __init__(self, config: PlaybookConfig, logger: BaseLogger):
+    def __init__(self, config: PlaybookConfig, logger: BaseLogger, session_provider: SessionProvider):
         """
         Initialize the checkpoint manager.
         
         Args:
             config: The playbook configuration
             logger: Logger instance for logging
+            session_provider: Provider for accessing sessions
         """
         self.config = config
         self.logger = logger
+        self.session_provider = session_provider
         self.content_hash: Optional[str] = None
         self.checkpoint_store: Optional[CheckpointStore] = None
         self.enabled = (self.config.incremental and self.config.incremental.enabled) or False
 
         if self.enabled:
             self.content_hash = self._generate_content_hash()
-            self.checkpoint_store = create_checkpoint_store(self.config.incremental) # type: ignore
+            self.checkpoint_store = create_checkpoint_store(
+                self.config.incremental, # type: ignore
+                self.session_provider,
+                self.logger
+            )
             self.logger.log_info(f"Incremental execution enabled. Content hash: {self.content_hash}")
 
     def _generate_content_hash(self) -> str:

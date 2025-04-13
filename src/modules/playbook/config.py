@@ -112,19 +112,31 @@ class PhaseConfig(BaseModel):
 
 class IncrementalStoreType(str, Enum):
     FILE = "file"
+    REMOTE = "remote"
 
 class IncrementalConfig(BaseModel):
     enabled: bool = False
     store: IncrementalStoreType = IncrementalStoreType.FILE
     file_path: Optional[str] = None
+    session: Optional[str] = None  # Session name for remote store
+    endpoint: Optional[str] = None  # Endpoint path for remote store
 
     @model_validator(mode='after')
-    def validate_file_store(self) -> 'IncrementalConfig':
-        """Validate the file store configuration."""
+    def validate_config(self) -> 'IncrementalConfig':
+        """Validate the configuration."""
         if not self.enabled:
             return self
-        if self.store == IncrementalStoreType.FILE and not self.file_path:
-            raise ValueError("file_path is required when store type is 'file'")
+            
+        if self.store == IncrementalStoreType.FILE:
+            if not self.file_path:
+                raise ValueError("file_path is required for file store")
+                
+        elif self.store == IncrementalStoreType.REMOTE:
+            if not self.session:
+                raise ValueError("session is required for remote store")
+            if not self.endpoint:
+                raise ValueError("endpoint is required for remote store")
+                
         return self
 
 class MetricsCollectorType(str, Enum):
