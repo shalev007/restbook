@@ -5,6 +5,7 @@ import requests
 from typing import Optional, TextIO
 from ...logging import BaseLogger
 from ...session.session_store import SessionStore
+from ...shutdown.coordinator import ShutdownCoordinator
 from ..playbook import Playbook
 from croniter import croniter
 import time
@@ -43,6 +44,7 @@ class RunCommand:
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
         self.max_delay = max_delay
+        self.shutdown_coordinator: ShutdownCoordinator = ShutdownCoordinator(logger, shutdown_timeout=10.0)
 
     def _read_playbook_content(self, playbook_file: Optional[TextIO]) -> str:
         """Read playbook content from file or stdin."""
@@ -83,6 +85,18 @@ class RunCommand:
             self.logger.log_info(f"Sleeping for {sleep_time:.2f} seconds")
             time.sleep(sleep_time)
 
+    async def _execute_playbook_task(self, playbook: Playbook) -> None:
+        """Execute the playbook as an async task."""
+        try:
+            await playbook.execute(self.session_store)
+        except asyncio.CancelledError:
+            self.logger.log_info("Playbook execution was cancelled")
+            # Let the cancelation propagate for proper cleanup
+            raise
+        except Exception as e:
+            self.logger.log_error(f"Error during playbook execution: {str(e)}")
+            raise
+
     def execute_playbook(self, playbook_file: Optional[TextIO], no_resume: bool):
         """Execute a playbook from a file or stdin."""
         try:
@@ -93,53 +107,17 @@ class RunCommand:
             # Configure playbook settings
             self._configure_playbook(playbook, no_resume)
             
-            # Set up a loop with proper signal handling
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # Register the playbook's cancel_and_cleanup method as a shutdown handler
+            self.shutdown_coordinator.register_handler(
+                "playbook_cleanup", 
+                playbook.cancel_and_cleanup,
+                priority=0
+            )
             
-            # Variables to track the task and original signals
-            main_task = None
-            original_sigint = None
-            original_sigterm = None
-            
-            try:
-                # Define signal handler function
-                def signal_handler(sig, frame):
-                    sig_name = signal.Signals(sig).name
-                    print(f"\nReceived {sig_name} signal, initiating graceful shutdown...")
-                    
-                    # Cancel the main task if it's running
-                    if main_task and not main_task.done():
-                        loop.call_soon_threadsafe(main_task.cancel)
-                
-                # Save original signal handlers
-                original_sigint = signal.signal(signal.SIGINT, signal_handler)
-                original_sigterm = signal.signal(signal.SIGTERM, signal_handler)
-                
-                # Create and run the playbook task
-                main_task = loop.create_task(playbook.execute(self.session_store))
-                loop.run_until_complete(main_task)
-                
-            except asyncio.CancelledError:
-                self.logger.log_info("Playbook execution was cancelled by signal")
-            finally:
-                # Always restore original signal handlers
-                if original_sigint:
-                    signal.signal(signal.SIGINT, original_sigint)
-                if original_sigterm:
-                    signal.signal(signal.SIGTERM, original_sigterm)
-                
-                # Run any pending tasks (like cleanup operations)
-                try:
-                    pending = asyncio.all_tasks(loop)
-                    if pending:
-                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-                except Exception as e:
-                    self.logger.log_warning(f"Error cleaning up pending tasks: {str(e)}")
-                
-                # Close the loop properly
-                loop.run_until_complete(loop.shutdown_asyncgens())
-                loop.close()
+            # Execute the playbook with graceful shutdown handling
+            self.shutdown_coordinator.run_async_with_signals(
+                self._execute_playbook_task(playbook)
+            )
 
         except ValueError as err:
             self.logger.log_error(f"Playbook error: {str(err)}")
