@@ -1,4 +1,5 @@
 import asyncio
+import signal
 import sys
 import requests
 from typing import Optional, TextIO
@@ -92,13 +93,60 @@ class RunCommand:
             # Configure playbook settings
             self._configure_playbook(playbook, no_resume)
             
-            # Execute the playbook
-            asyncio.run(playbook.execute(self.session_store))
+            # Set up a loop with proper signal handling
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            # Variables to track the task and original signals
+            main_task = None
+            original_sigint = None
+            original_sigterm = None
+            
+            try:
+                # Define signal handler function
+                def signal_handler(sig, frame):
+                    sig_name = signal.Signals(sig).name
+                    print(f"\nReceived {sig_name} signal, initiating graceful shutdown...")
+                    
+                    # Cancel the main task if it's running
+                    if main_task and not main_task.done():
+                        loop.call_soon_threadsafe(main_task.cancel)
+                
+                # Save original signal handlers
+                original_sigint = signal.signal(signal.SIGINT, signal_handler)
+                original_sigterm = signal.signal(signal.SIGTERM, signal_handler)
+                
+                # Create and run the playbook task
+                main_task = loop.create_task(playbook.execute(self.session_store))
+                loop.run_until_complete(main_task)
+                
+            except asyncio.CancelledError:
+                self.logger.log_info("Playbook execution was cancelled by signal")
+            finally:
+                # Always restore original signal handlers
+                if original_sigint:
+                    signal.signal(signal.SIGINT, original_sigint)
+                if original_sigterm:
+                    signal.signal(signal.SIGTERM, original_sigterm)
+                
+                # Run any pending tasks (like cleanup operations)
+                try:
+                    pending = asyncio.all_tasks(loop)
+                    if pending:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except Exception as e:
+                    self.logger.log_warning(f"Error cleaning up pending tasks: {str(e)}")
+                
+                # Close the loop properly
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.close()
 
         except ValueError as err:
             self.logger.log_error(f"Playbook error: {str(err)}")
         except requests.exceptions.RequestException as err:
             self.logger.log_error(f"Request failed: {str(err)}")
+        except KeyboardInterrupt:
+            self.logger.log_info("Execution interrupted by user")
         except Exception as err:
             self.logger.log_error(f"Unexpected error during playbook execution: {str(err)}")
             raise
@@ -142,5 +190,8 @@ class RunCommand:
             except ImportError:
                 self.logger.log_error("croniter package is required for cron functionality. Install with: pip install croniter")
                 sys.exit(1)
+            except KeyboardInterrupt:
+                self.logger.log_info("Cron scheduler stopped by user")
+                return
         else:
             self.execute_playbook(playbook_file, no_resume) 

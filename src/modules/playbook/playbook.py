@@ -61,6 +61,11 @@ class Playbook:
         self.session_manager = session_manager
         self.observer_manager = observer_manager
         self.client_factory = client_factory
+        # Track all running request tasks for graceful shutdown
+        self._running_requests: List[asyncio.Task] = []
+        self._cleanup_done = False
+        self._current_phase_index = 0
+        self._current_step_index = 0
 
     @classmethod
     def create(cls, config: PlaybookConfig, logger: BaseLogger) -> 'Playbook':
@@ -116,6 +121,59 @@ class Playbook:
         """Convert the playbook to a dictionary."""
         return self.config.model_dump()
 
+    async def cancel_and_cleanup(self) -> None:
+        """
+        Cancel any running requests and clean up resources.
+        This is safe to call multiple times.
+        """
+        if self._cleanup_done:
+            return
+            
+        self.logger.log_info("Gracefully cleaning up playbook execution...")
+        
+        # Cancel any running requests
+        active_requests = list(self._running_requests)  # Make a copy
+        for task in active_requests:
+            if not task.done():
+                self.logger.log_info(f"Cancelling in-progress request")
+                task.cancel()
+        
+        # Wait for cancellations to complete (with timeout)
+        if active_requests:
+            try:
+                # Give them 2 seconds to clean up
+                await asyncio.wait(active_requests, timeout=2.0, return_when=asyncio.ALL_COMPLETED)
+            except Exception as e:
+                self.logger.log_warning(f"Error waiting for request cancellation: {str(e)}")
+        
+        # Save checkpoint of current progress if possible
+        try:
+            if hasattr(self.config, 'incremental') and self.config.incremental and self.config.incremental.enabled:
+                self.logger.log_info("Saving checkpoint at current position")
+                await self.checkpoint_manager.save_checkpoint(
+                    self._current_phase_index,
+                    self._current_step_index,
+                    self.variables.get_all()
+                )
+        except Exception as e:
+            self.logger.log_warning(f"Error saving checkpoint during cleanup: {str(e)}")
+        
+        # Clean up resources
+        try:
+            self.session_manager.clear_temp_sessions()
+        except Exception as e:
+            self.logger.log_warning(f"Error cleaning up sessions: {str(e)}")
+            
+        # Finalize metrics
+        try:
+            self.observer_manager.notify(PlaybookEndEvent())
+            self.observer_manager.cleanup()
+        except Exception as e:
+            self.logger.log_warning(f"Error cleaning up metrics: {str(e)}")
+            
+        self._cleanup_done = True
+        self.logger.log_info("Playbook cleanup complete")
+
     async def execute(self, session_store: SessionStore) -> None:
         """
         Execute the playbook using the provided session store.
@@ -142,6 +200,9 @@ class Playbook:
                     self.variables.set_all(checkpoint.variables)
             # Execute phases
             for phase_index, phase_config in enumerate(self.config.phases):
+                self._current_phase_index = phase_index
+                self._current_step_index = 0
+                
                 phase = PhaseContext(phase_index, phase_config)
                 # Skip phases before checkpoint
                 if self.checkpoint_manager.should_skip_phase(phase_index, checkpoint):
@@ -182,6 +243,8 @@ class Playbook:
                     else:
                         # Execute steps sequentially
                         for step_index, step in enumerate(phase.steps):
+                            self._current_step_index = step_index
+                            
                             # Skip steps before checkpoint in the current phase
                             if self.checkpoint_manager.should_skip_step(phase.index, step_index, checkpoint):
                                 self.logger.log_info(f"Skipping step {step_index} (already completed)")
@@ -198,6 +261,14 @@ class Playbook:
                     
                     # End metrics collection for the phase
                     self.observer_manager.notify(PhaseEndEvent(phase))
+                except asyncio.CancelledError:
+                    self.logger.log_warning(f"Phase {phase.name} execution was cancelled")
+                    # End phase metrics in case of cancellation
+                    try:
+                        self.observer_manager.notify(PhaseEndEvent(phase))
+                    except Exception:
+                        pass
+                    raise  # Re-raise cancellation
                 except Exception as e:
                     # Clean up the phase metrics context in case of error
                     try:
@@ -208,18 +279,18 @@ class Playbook:
                 
             # Clear checkpoint after successful execution
             await self.checkpoint_manager.clear_checkpoint()
+        except asyncio.CancelledError:
+            self.logger.log_info("Playbook execution was cancelled")
+            await self.cancel_and_cleanup()
+            raise
         except Exception as e:
             self.logger.log_error(str(e))
+            await self.cancel_and_cleanup()
             raise
         finally:
-            # Clean up temporary sessions
-            self.session_manager.clear_temp_sessions()
-            
-            # Finalize playbook metrics
-            self.observer_manager.notify(PlaybookEndEvent())
-            
-            # Clean up observers
-            self.observer_manager.cleanup()
+            # Always ensure cleanup happens
+            if not self._cleanup_done:
+                await self.cancel_and_cleanup()
 
     async def _execute_step(self, step_config: StepConfig, phase_context_id: str, step_index: int, session_store: SessionStore) -> None:
         """
@@ -292,6 +363,14 @@ class Playbook:
                 # Execute step directly if no iteration is configured
                 await self._execute_single_step(step)
 
+        except asyncio.CancelledError:
+            self.logger.log_warning(f"Step {step_index} in phase {phase_context_id} was cancelled")
+            # End step metrics in case of cancellation 
+            try:
+                self.observer_manager.notify(StepEndEvent(step))
+            except Exception:
+                pass
+            raise
         except Exception as e:
             if step.on_error == "ignore":
                 self.logger.log_warning(f"Step failed but continuing: {str(e)}")
@@ -320,15 +399,23 @@ class Playbook:
         # Start metrics collection for the request
         self.observer_manager.notify(RequestStartEvent(request_context))
         
+        # Create task and track it for graceful shutdown
+        task = asyncio.create_task(client.execute_request(HttpRequestSpec(
+            url=step.request.endpoint,
+            method=step.request.method.value,
+            headers=step.request.headers,
+            data=step.request.data,
+            params=step.request.params
+        )))
+        self._running_requests.append(task)
+        
         try:
             # Execute request
-            response = await client.execute_request(HttpRequestSpec(
-                url=step.request.endpoint,
-                method=step.request.method.value,
-                headers=step.request.headers,
-                data=step.request.data,
-                params=step.request.params
-            ))
+            response = await task
+            
+            # Remove from tracking once complete
+            if task in self._running_requests:
+                self._running_requests.remove(task)
 
             # Log response
             self.logger.log_status(response.status)
@@ -349,7 +436,17 @@ class Playbook:
                 body_str = await response.text()
             self.logger.log_body(body_str)
 
+        except asyncio.CancelledError:
+            self.logger.log_warning(f"Request was cancelled")
+            # Clean up the tracking
+            if task in self._running_requests:
+                self._running_requests.remove(task)
+            raise
         except Exception as e:
+            # Clean up the tracking
+            if task in self._running_requests:
+                self._running_requests.remove(task)
+                
             if step.on_error != "ignore":
                 raise
         finally:
