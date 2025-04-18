@@ -36,7 +36,8 @@ class Playbook:
                  checkpoint_manager: CheckpointManager,
                  session_manager: SessionManager,
                  observer_manager: ObserverManager,
-                 client_factory: ResilientHttpClientFactory):
+                 client_factory: ResilientHttpClientFactory,
+                 session_store: SessionStore):
         """
         Initialize a playbook with its dependencies.
         
@@ -50,6 +51,7 @@ class Playbook:
             session_manager: Manages HTTP sessions
             observer_manager: Manages execution observers
             client_factory: Factory for creating HTTP clients
+            session_store: Store for managing HTTP sessions
         """
         self.config = config
         self.logger = logger
@@ -60,6 +62,7 @@ class Playbook:
         self.session_manager = session_manager
         self.observer_manager = observer_manager
         self.client_factory = client_factory
+        self.session_store = session_store
         # Track all running request tasks for graceful shutdown
         self._running_requests: List[asyncio.Task] = []
         self._cleanup_done = False
@@ -67,13 +70,14 @@ class Playbook:
         self._current_step_index = 0
 
     @classmethod
-    def create(cls, config: PlaybookConfig, logger: BaseLogger) -> 'Playbook':
+    def create(cls, config: PlaybookConfig, logger: BaseLogger, session_store: SessionStore) -> 'Playbook':
         """
         Factory method to create a Playbook instance with default dependencies.
         
         Args:
             config: The playbook configuration
             logger: Logger instance for request/response logging
+            session_store: Store for managing HTTP sessions
             
         Returns:
             Playbook: A new playbook instance with default dependencies
@@ -95,17 +99,19 @@ class Playbook:
             checkpoint_manager=checkpoint_manager,
             session_manager=session_manager,
             observer_manager=observer_manager,
-            client_factory=client_factory
+            client_factory=client_factory,
+            session_store=session_store
         )
 
     @classmethod
-    def from_yaml(cls, yaml_content: str, logger: BaseLogger) -> 'Playbook':
+    def from_yaml(cls, yaml_content: str, logger: BaseLogger, session_store: SessionStore) -> 'Playbook':
         """
         Create a Playbook instance from YAML content.
         
         Args:
             yaml_content: The YAML content to parse
             logger: Logger instance for request/response logging
+            session_store: Store for managing HTTP sessions
             
         Returns:
             Playbook: A new playbook instance
@@ -114,7 +120,7 @@ class Playbook:
             ValueError: If the YAML content is invalid
         """
         config = PlaybookYamlValidator.validate_and_load(yaml_content)
-        return cls.create(config, logger)
+        return cls.create(config, logger, session_store)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the playbook to a dictionary."""
@@ -175,13 +181,10 @@ class Playbook:
         self._cleanup_done = True
         self.logger.log_info("Playbook cleanup complete")
 
-    async def execute(self, session_store: SessionStore) -> None:
+    async def execute(self) -> None:
         """
-        Execute the playbook using the provided session store.
+        Execute the playbook.
         
-        Args:
-            session_store: The session store to use for execution
-            
         Raises:
             ValueError: If the session does not exist
             aiohttp.ClientError: If any request fails
@@ -225,7 +228,7 @@ class Playbook:
                         
                         # Execute steps in parallel
                         tasks = [
-                            self._execute_step(step, phase.id, step_index, session_store)
+                            self._execute_step(step, phase.id, step_index)
                             for step_index, step in enumerate(phase.steps)
                         ]
                         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -251,7 +254,7 @@ class Playbook:
                                 self.logger.log_info(f"Skipping step {step_index} (already completed)")
                                 continue
                                 
-                            await self._execute_step(step, phase.id, step_index, session_store)
+                            await self._execute_step(step, phase.id, step_index)
                             
                             # Save checkpoint after each step
                             await self.checkpoint_manager.save_checkpoint(
@@ -283,7 +286,7 @@ class Playbook:
                 self.observer_manager.cleanup()
                 self.logger.log_debug("Playbook cleanup complete")
 
-    async def _execute_step(self, step_config: StepConfig, phase_context_id: str, step_index: int, session_store: SessionStore) -> None:
+    async def _execute_step(self, step_config: StepConfig, phase_context_id: str, step_index: int) -> None:
         """
         Execute a single step of the playbook.
         
@@ -291,9 +294,8 @@ class Playbook:
             step_config: The step configuration to execute
             phase_context_id: The context ID for the phase
             step_index: Index of the step in the phase
-            session_store: Session store for retrieving sessions
         """
-        session = self.session_manager.get_session(step_config.session, session_store)
+        session = self.session_manager.get_session(step_config.session, self.session_store)
         step = StepContext(phase_context_id, step_index, step_config, session)
         
         # Start metrics collection for the step
