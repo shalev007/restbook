@@ -36,8 +36,7 @@ class Playbook:
                  checkpoint_manager: CheckpointManager,
                  session_manager: SessionManager,
                  observer_manager: ObserverManager,
-                 client_factory: ResilientHttpClientFactory,
-                 session_store: SessionStore):
+                 client_factory: ResilientHttpClientFactory):
         """
         Initialize a playbook with its dependencies.
         
@@ -51,7 +50,6 @@ class Playbook:
             session_manager: Manages HTTP sessions
             observer_manager: Manages execution observers
             client_factory: Factory for creating HTTP clients
-            session_store: Store for managing HTTP sessions
         """
         self.config = config
         self.logger = logger
@@ -62,7 +60,6 @@ class Playbook:
         self.session_manager = session_manager
         self.observer_manager = observer_manager
         self.client_factory = client_factory
-        self.session_store = session_store
         # Track all running request tasks for graceful shutdown
         self._running_requests: List[asyncio.Task] = []
         self._cleanup_done = False
@@ -86,7 +83,7 @@ class Playbook:
         renderer = TemplateRenderer(logger)
         config_renderer = ConfigRenderer(renderer, variables)
         checkpoint_manager = CheckpointManager(config, logger)
-        session_manager = SessionManager(config_renderer, logger)
+        session_manager = SessionManager(config_renderer, logger, session_store)
         observer_manager = ObserverManager(config, logger)
         client_factory = ResilientHttpClientFactory(logger)
         
@@ -99,8 +96,7 @@ class Playbook:
             checkpoint_manager=checkpoint_manager,
             session_manager=session_manager,
             observer_manager=observer_manager,
-            client_factory=client_factory,
-            session_store=session_store
+            client_factory=client_factory
         )
 
     @classmethod
@@ -295,7 +291,7 @@ class Playbook:
             phase_context_id: The context ID for the phase
             step_index: Index of the step in the phase
         """
-        session = self.session_manager.get_session(step_config.session, self.session_store)
+        session = self.session_manager.get_session(step_config.session)
         step = StepContext(phase_context_id, step_index, step_config, session)
         
         # Start metrics collection for the step
