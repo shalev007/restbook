@@ -140,8 +140,10 @@ class Playbook:
         # Wait for cancellations to complete (with timeout)
         if active_requests:
             try:
-                # Give them 2 seconds to clean up
-                await asyncio.wait(active_requests, timeout=2.0, return_when=asyncio.ALL_COMPLETED)
+                # Use configured timeout or default
+                timeout = self.config.shutdown_timeout
+                self.logger.log_info(f"Waiting up to {timeout} seconds for requests to complete...")
+                await asyncio.wait(active_requests, timeout=timeout, return_when=asyncio.ALL_COMPLETED)
             except Exception as e:
                 self.logger.log_warning(f"Error waiting for request cancellation: {str(e)}")
         

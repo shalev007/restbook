@@ -101,4 +101,6 @@ metrics:
   enabled: true
   collector: json
   output_file: "metrics.json"
-  verbosity: debug 
+  verbosity: debug
+
+shutdown_timeout: 5.0  # Give more time for long-running requests to complete 
