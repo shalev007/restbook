@@ -5,8 +5,6 @@ import requests
 from typing import Optional, TextIO
 from ...logging import BaseLogger
 from ...session.session_store import SessionStore
-from ...shutdown.factory import ShutdownCoordinatorFactory
-from ...shutdown.coordinator import ShutdownCoordinator
 from ..playbook import Playbook
 from croniter import croniter
 import time
@@ -46,10 +44,6 @@ class RunCommand:
         self.backoff_factor = backoff_factor
         self.max_delay = max_delay
         
-        # Get or create a shutdown coordinator using the factory
-        coordinator_factory = ShutdownCoordinatorFactory.get_instance()
-        self.shutdown_coordinator: ShutdownCoordinator = coordinator_factory.create_coordinator(logger, "playbook_runner")
-
     def _read_playbook_content(self, playbook_file: Optional[TextIO]) -> str:
         """Read playbook content from file or stdin."""
         if playbook_file is None:
