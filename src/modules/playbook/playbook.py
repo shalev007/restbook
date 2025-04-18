@@ -149,7 +149,7 @@ class Playbook:
         
         # Save checkpoint of current progress if possible
         try:
-            if hasattr(self.config, 'incremental') and self.config.incremental and self.config.incremental.enabled:
+            if self.checkpoint_manager.is_enabled():
                 self.logger.log_info("Saving checkpoint at current position")
                 await self.checkpoint_manager.save_checkpoint(
                     self._current_phase_index,
