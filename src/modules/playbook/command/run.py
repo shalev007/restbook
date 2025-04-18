@@ -100,17 +100,17 @@ class RunCommand:
             self._configure_playbook(playbook, no_resume)
             
             # Register the playbook's cancel_and_cleanup method as a shutdown handler
-            self.shutdown_coordinator.register_handler(
-                "playbook_cleanup", 
-                playbook.cancel_and_cleanup,
-                priority=0
-            )
+            # self.shutdown_coordinator.register_handler(
+            #     "playbook_cleanup", 
+            #     playbook.cancel_and_cleanup,
+            #     priority=0
+            # )
             
             # Execute the playbook with graceful shutdown handling
-            self.shutdown_coordinator.run_async_with_signals(
-                playbook.execute(self.session_store)
-            )
-
+            # self.shutdown_coordinator.run_async_with_signals(
+            #     playbook.execute(self.session_store)
+            # )
+            asyncio.run(playbook.execute(self.session_store))
         except ValueError as err:
             self.logger.log_error(f"Playbook error: {str(err)}")
         except requests.exceptions.RequestException as err:

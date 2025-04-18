@@ -1,10 +1,9 @@
 import json
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 import asyncio
-import uuid
 
 from .config import (
-    PlaybookConfig, StepConfig, RequestConfig, RetryConfig
+    PlaybookConfig, StepConfig
 )
 from .validator import PlaybookYamlValidator
 from .template_renderer import TemplateRenderer
@@ -15,7 +14,7 @@ from .managers.session_manager import SessionManager
 from .managers.observer_manager import ObserverManager
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
-from ..request.resilient_http_client import HttpRequestSpec, ResilientHttpClient
+from ..request.resilient_http_client import HttpRequestSpec
 from ..request.client_factory import ResilientHttpClientFactory
 from .observer.events import (
     PlaybookStartEvent, PlaybookEndEvent,
@@ -264,33 +263,23 @@ class Playbook:
                 except asyncio.CancelledError:
                     self.logger.log_warning(f"Phase {phase.name} execution was cancelled")
                     # End phase metrics in case of cancellation
-                    try:
-                        self.observer_manager.notify(PhaseEndEvent(phase))
-                    except Exception:
-                        pass
-                    raise  # Re-raise cancellation
-                except Exception as e:
-                    # Clean up the phase metrics context in case of error
-                    try:
-                        self.observer_manager.notify(PhaseEndEvent(phase))
-                    except Exception:
-                        pass
+                    self.observer_manager.notify(PhaseEndEvent(phase))
                     raise
-                
+            self.observer_manager.notify(PlaybookEndEvent())
             # Clear checkpoint after successful execution
             await self.checkpoint_manager.clear_checkpoint()
         except asyncio.CancelledError:
             self.logger.log_info("Playbook execution was cancelled")
             await self.cancel_and_cleanup()
-            raise
         except Exception as e:
             self.logger.log_error(str(e))
             await self.cancel_and_cleanup()
-            raise
-        # finally:
+        finally:
             # Always ensure cleanup happens
-            # if not self._cleanup_done:
-                # await self.cancel_and_cleanup()
+            if not self._cleanup_done:
+                self.session_manager.clear_temp_sessions()
+                self.observer_manager.cleanup()
+                self.logger.log_debug("Playbook cleanup complete")
 
     async def _execute_step(self, step_config: StepConfig, phase_context_id: str, step_index: int, session_store: SessionStore) -> None:
         """
@@ -410,6 +399,7 @@ class Playbook:
         self._running_requests.append(task)
         
         try:
+            self.logger.log_info(f"Executing request: {step.request.endpoint}")
             # Execute request
             response = await task
             
