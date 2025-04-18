@@ -287,10 +287,10 @@ class Playbook:
             self.logger.log_error(str(e))
             await self.cancel_and_cleanup()
             raise
-        finally:
+        # finally:
             # Always ensure cleanup happens
-            if not self._cleanup_done:
-                await self.cancel_and_cleanup()
+            # if not self._cleanup_done:
+                # await self.cancel_and_cleanup()
 
     async def _execute_step(self, step_config: StepConfig, phase_context_id: str, step_index: int, session_store: SessionStore) -> None:
         """

@@ -25,18 +25,19 @@ class ShutdownHandler:
 class ShutdownCoordinator(Generic[T]):
     """Coordinates graceful shutdown of application components."""
     
-    def __init__(self, logger: BaseLogger, shutdown_timeout: float = 5.0):
+    # Default timeout for shutdown operations (5 seconds)
+    DEFAULT_SHUTDOWN_TIMEOUT = 5.0
+    
+    def __init__(self, logger: BaseLogger):
         """
         Initialize the shutdown coordinator.
         
         Args:
             logger: Logger instance for logging shutdown events
-            shutdown_timeout: Timeout in seconds to wait for graceful shutdown
         """
         self._handlers: List[ShutdownHandler] = []
         self._is_shutting_down = False
         self.logger = logger
-        self.shutdown_timeout = shutdown_timeout
         self._main_task: Optional[Task[T]] = None
         self._active_loop: Optional[AbstractEventLoop] = None
         self._original_sigint: SignalHandlerType = None
@@ -142,11 +143,11 @@ class ShutdownCoordinator(Generic[T]):
             try:
                 await asyncio.wait_for(
                     asyncio.gather(*tasks, return_exceptions=True),
-                    timeout=self.shutdown_timeout
+                    timeout=self.DEFAULT_SHUTDOWN_TIMEOUT
                 )
             except asyncio.TimeoutError:
                 self.logger.log_warning(
-                    f"Shutdown timed out after {self.shutdown_timeout} seconds. "
+                    f"Shutdown timed out after {self.DEFAULT_SHUTDOWN_TIMEOUT} seconds. "
                     "Some handlers may not have completed gracefully."
                 )
         
@@ -228,7 +229,7 @@ class ShutdownCoordinator(Generic[T]):
             except Exception as e:
                 self.logger.log_warning(f"Error closing event loop: {str(e)}")
         
-        if result is None and not self._is_shutting_down:
-            raise RuntimeError("Task was cancelled before completion")
+        # if result is None and not self._is_shutting_down:
+        #     raise RuntimeError("Task was cancelled before completion")
             
         return cast(T, result) 

@@ -5,6 +5,7 @@ import requests
 from typing import Optional, TextIO
 from ...logging import BaseLogger
 from ...session.session_store import SessionStore
+from ...shutdown.factory import ShutdownCoordinatorFactory
 from ...shutdown.coordinator import ShutdownCoordinator
 from ..playbook import Playbook
 from croniter import croniter
@@ -44,7 +45,10 @@ class RunCommand:
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
         self.max_delay = max_delay
-        self.shutdown_coordinator: ShutdownCoordinator = ShutdownCoordinator(logger, shutdown_timeout=10.0)
+        
+        # Get or create a shutdown coordinator using the factory
+        coordinator_factory = ShutdownCoordinatorFactory.get_instance()
+        self.shutdown_coordinator: ShutdownCoordinator = coordinator_factory.create_coordinator(logger, "playbook_runner")
 
     def _read_playbook_content(self, playbook_file: Optional[TextIO]) -> str:
         """Read playbook content from file or stdin."""
@@ -85,18 +89,6 @@ class RunCommand:
             self.logger.log_info(f"Sleeping for {sleep_time:.2f} seconds")
             time.sleep(sleep_time)
 
-    async def _execute_playbook_task(self, playbook: Playbook) -> None:
-        """Execute the playbook as an async task."""
-        try:
-            await playbook.execute(self.session_store)
-        except asyncio.CancelledError:
-            self.logger.log_info("Playbook execution was cancelled")
-            # Let the cancelation propagate for proper cleanup
-            raise
-        except Exception as e:
-            self.logger.log_error(f"Error during playbook execution: {str(e)}")
-            raise
-
     def execute_playbook(self, playbook_file: Optional[TextIO], no_resume: bool):
         """Execute a playbook from a file or stdin."""
         try:
@@ -116,7 +108,7 @@ class RunCommand:
             
             # Execute the playbook with graceful shutdown handling
             self.shutdown_coordinator.run_async_with_signals(
-                self._execute_playbook_task(playbook)
+                playbook.execute(self.session_store)
             )
 
         except ValueError as err:
