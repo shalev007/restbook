@@ -28,6 +28,15 @@ class CheckpointManager:
             self.checkpoint_store = create_checkpoint_store(self.config.incremental) # type: ignore
             self.logger.log_info(f"Incremental execution enabled. Content hash: {self.content_hash}")
 
+    def is_enabled(self) -> bool:
+        """
+        Check if incremental execution is enabled.
+        
+        Returns:
+            bool: True if incremental execution is enabled, False otherwise
+        """
+        return self.enabled
+
     def _generate_content_hash(self) -> str:
         """
         Generate a hash of the playbook content.

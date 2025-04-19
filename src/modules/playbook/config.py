@@ -162,3 +162,4 @@ class PlaybookConfig(BaseModel):
     phases: List[PhaseConfig]
     incremental: Optional[IncrementalConfig] = IncrementalConfig()  # Default to disabled
     metrics: Optional[MetricsConfig] = MetricsConfig()  # Default to disabled
+    shutdown_timeout: float = 2.0  # Default timeout for graceful shutdown in seconds

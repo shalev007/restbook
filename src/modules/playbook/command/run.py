@@ -1,4 +1,5 @@
 import asyncio
+import signal
 import sys
 import requests
 from typing import Optional, TextIO
@@ -42,7 +43,7 @@ class RunCommand:
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
         self.max_delay = max_delay
-
+        
     def _read_playbook_content(self, playbook_file: Optional[TextIO]) -> str:
         """Read playbook content from file or stdin."""
         if playbook_file is None:
@@ -87,18 +88,18 @@ class RunCommand:
         try:
             # Read and parse the playbook
             content = self._read_playbook_content(playbook_file)
-            playbook = Playbook.from_yaml(content, logger=self.logger)
+            playbook = Playbook.from_yaml(content, self.logger, self.session_store)
             
             # Configure playbook settings
             self._configure_playbook(playbook, no_resume)
-            
             # Execute the playbook
-            asyncio.run(playbook.execute(self.session_store))
-
+            asyncio.run(playbook.execute())
         except ValueError as err:
             self.logger.log_error(f"Playbook error: {str(err)}")
         except requests.exceptions.RequestException as err:
             self.logger.log_error(f"Request failed: {str(err)}")
+        except KeyboardInterrupt:
+            self.logger.log_info("Execution interrupted by user")
         except Exception as err:
             self.logger.log_error(f"Unexpected error during playbook execution: {str(err)}")
             raise
@@ -142,5 +143,8 @@ class RunCommand:
             except ImportError:
                 self.logger.log_error("croniter package is required for cron functionality. Install with: pip install croniter")
                 sys.exit(1)
+            except KeyboardInterrupt:
+                self.logger.log_info("Cron scheduler stopped by user")
+                return
         else:
             self.execute_playbook(playbook_file, no_resume) 

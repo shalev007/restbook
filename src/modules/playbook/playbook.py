@@ -1,10 +1,9 @@
 import json
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 import asyncio
-import uuid
 
 from .config import (
-    PlaybookConfig, StepConfig, RequestConfig, RetryConfig
+    PlaybookConfig, StepConfig
 )
 from .validator import PlaybookYamlValidator
 from .template_renderer import TemplateRenderer
@@ -13,9 +12,10 @@ from .managers.config_renderer import ConfigRenderer
 from .managers.checkpoint_manager import CheckpointManager
 from .managers.session_manager import SessionManager
 from .managers.observer_manager import ObserverManager
+from .managers.execution_tracker import ExecutionTracker
 from ..session.session_store import SessionStore
 from ..logging import BaseLogger
-from ..request.resilient_http_client import HttpRequestSpec, ResilientHttpClient
+from ..request.resilient_http_client import HttpRequestSpec
 from ..request.client_factory import ResilientHttpClientFactory
 from .observer.events import (
     PlaybookStartEvent, PlaybookEndEvent,
@@ -61,15 +61,22 @@ class Playbook:
         self.session_manager = session_manager
         self.observer_manager = observer_manager
         self.client_factory = client_factory
+        self.tracker = ExecutionTracker()
+        # Track all running request tasks for graceful shutdown
+        self._running_requests: List[asyncio.Task] = []
+        self._cleanup_done = False
+        self._current_phase_index = 0
+        self._current_step_index = 0
 
     @classmethod
-    def create(cls, config: PlaybookConfig, logger: BaseLogger) -> 'Playbook':
+    def create(cls, config: PlaybookConfig, logger: BaseLogger, session_store: SessionStore) -> 'Playbook':
         """
         Factory method to create a Playbook instance with default dependencies.
         
         Args:
             config: The playbook configuration
             logger: Logger instance for request/response logging
+            session_store: Store for managing HTTP sessions
             
         Returns:
             Playbook: A new playbook instance with default dependencies
@@ -78,7 +85,7 @@ class Playbook:
         renderer = TemplateRenderer(logger)
         config_renderer = ConfigRenderer(renderer, variables)
         checkpoint_manager = CheckpointManager(config, logger)
-        session_manager = SessionManager(config_renderer, logger)
+        session_manager = SessionManager(config_renderer, logger, session_store)
         observer_manager = ObserverManager(config, logger)
         client_factory = ResilientHttpClientFactory(logger)
         
@@ -95,13 +102,14 @@ class Playbook:
         )
 
     @classmethod
-    def from_yaml(cls, yaml_content: str, logger: BaseLogger) -> 'Playbook':
+    def from_yaml(cls, yaml_content: str, logger: BaseLogger, session_store: SessionStore) -> 'Playbook':
         """
         Create a Playbook instance from YAML content.
         
         Args:
             yaml_content: The YAML content to parse
             logger: Logger instance for request/response logging
+            session_store: Store for managing HTTP sessions
             
         Returns:
             Playbook: A new playbook instance
@@ -110,19 +118,71 @@ class Playbook:
             ValueError: If the YAML content is invalid
         """
         config = PlaybookYamlValidator.validate_and_load(yaml_content)
-        return cls.create(config, logger)
+        return cls.create(config, logger, session_store)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert the playbook to a dictionary."""
         return self.config.model_dump()
 
-    async def execute(self, session_store: SessionStore) -> None:
+    async def cancel_and_cleanup(self) -> None:
         """
-        Execute the playbook using the provided session store.
-        
-        Args:
-            session_store: The session store to use for execution
+        Cancel any running requests and clean up resources.
+        This is safe to call multiple times.
+        """
+        if self.tracker.cleanup_done:
+            return
             
+        self.logger.log_info("Gracefully cleaning up playbook execution...")
+        
+        # Cancel any running requests
+        active_requests = list(self.tracker.running_requests)  # Make a copy
+        for task in active_requests:
+            if not task.done():
+                self.logger.log_info(f"Cancelling in-progress request")
+                task.cancel()
+        
+        # Wait for cancellations to complete (with timeout)
+        if active_requests:
+            try:
+                # Use configured timeout or default
+                timeout = self.config.shutdown_timeout
+                self.logger.log_info(f"Waiting up to {timeout} seconds for requests to complete...")
+                await asyncio.wait(active_requests, timeout=timeout, return_when=asyncio.ALL_COMPLETED)
+            except Exception as e:
+                self.logger.log_warning(f"Error waiting for request cancellation: {str(e)}")
+        
+        # Save checkpoint of current progress if possible
+        try:
+            if self.checkpoint_manager.is_enabled():
+                self.logger.log_info("Saving checkpoint at current position")
+                await self.checkpoint_manager.save_checkpoint(
+                    self.tracker.current_phase_index,
+                    self.tracker.current_step_index,
+                    self.variables.get_all()
+                )
+        except Exception as e:
+            self.logger.log_warning(f"Error saving checkpoint during cleanup: {str(e)}")
+        
+        # Clean up resources
+        try:
+            self.session_manager.clear_temp_sessions()
+        except Exception as e:
+            self.logger.log_warning(f"Error cleaning up sessions: {str(e)}")
+            
+        # Finalize metrics
+        try:
+            self.observer_manager.notify(PlaybookEndEvent())
+            self.observer_manager.cleanup()
+        except Exception as e:
+            self.logger.log_warning(f"Error cleaning up metrics: {str(e)}")
+            
+        self.tracker.mark_cleanup_done()
+        self.logger.log_info("Playbook cleanup complete")
+
+    async def execute(self) -> None:
+        """
+        Execute the playbook.
+        
         Raises:
             ValueError: If the session does not exist
             aiohttp.ClientError: If any request fails
@@ -139,9 +199,12 @@ class Playbook:
 
             # Set variables from checkpoint if available
             if checkpoint and checkpoint.variables:
-                    self.variables.set_all(checkpoint.variables)
+                self.variables.set_all(checkpoint.variables)
             # Execute phases
             for phase_index, phase_config in enumerate(self.config.phases):
+                self.tracker.current_phase_index = phase_index
+                self.tracker.current_step_index = 0
+                
                 phase = PhaseContext(phase_index, phase_config)
                 # Skip phases before checkpoint
                 if self.checkpoint_manager.should_skip_phase(phase_index, checkpoint):
@@ -163,7 +226,7 @@ class Playbook:
                         
                         # Execute steps in parallel
                         tasks = [
-                            self._execute_step(step, phase.id, step_index, session_store)
+                            self._execute_step(step, phase, step_index)
                             for step_index, step in enumerate(phase.steps)
                         ]
                         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -182,12 +245,14 @@ class Playbook:
                     else:
                         # Execute steps sequentially
                         for step_index, step in enumerate(phase.steps):
+                            self.tracker.current_step_index = step_index
+                            
                             # Skip steps before checkpoint in the current phase
                             if self.checkpoint_manager.should_skip_step(phase.index, step_index, checkpoint):
                                 self.logger.log_info(f"Skipping step {step_index} (already completed)")
                                 continue
                                 
-                            await self._execute_step(step, phase.id, step_index, session_store)
+                            await self._execute_step(step, phase, step_index)
                             
                             # Save checkpoint after each step
                             await self.checkpoint_manager.save_checkpoint(
@@ -198,41 +263,38 @@ class Playbook:
                     
                     # End metrics collection for the phase
                     self.observer_manager.notify(PhaseEndEvent(phase))
-                except Exception as e:
-                    # Clean up the phase metrics context in case of error
-                    try:
-                        self.observer_manager.notify(PhaseEndEvent(phase))
-                    except Exception:
-                        pass
+                except asyncio.CancelledError:
+                    self.logger.log_warning(f"Phase {phase.name} execution was cancelled")
+                    # End phase metrics in case of cancellation
+                    self.observer_manager.notify(PhaseEndEvent(phase))
                     raise
-                
+            self.observer_manager.notify(PlaybookEndEvent())
             # Clear checkpoint after successful execution
             await self.checkpoint_manager.clear_checkpoint()
+        except asyncio.CancelledError:
+            self.logger.log_info("Playbook execution was cancelled")
+            await self.cancel_and_cleanup()
         except Exception as e:
             self.logger.log_error(str(e))
-            raise
+            await self.cancel_and_cleanup()
         finally:
-            # Clean up temporary sessions
-            self.session_manager.clear_temp_sessions()
-            
-            # Finalize playbook metrics
-            self.observer_manager.notify(PlaybookEndEvent())
-            
-            # Clean up observers
-            self.observer_manager.cleanup()
+            # Always ensure cleanup happens
+            if not self.tracker.cleanup_done:
+                self.session_manager.clear_temp_sessions()
+                self.observer_manager.cleanup()
+                self.logger.log_debug("Playbook cleanup complete")
 
-    async def _execute_step(self, step_config: StepConfig, phase_context_id: str, step_index: int, session_store: SessionStore) -> None:
+    async def _execute_step(self, step_config: StepConfig, phase: PhaseContext, step_index: int) -> None:
         """
         Execute a single step of the playbook.
         
         Args:
             step_config: The step configuration to execute
-            phase_context_id: The context ID for the phase
+            phase: The context for the phase
             step_index: Index of the step in the phase
-            session_store: Session store for retrieving sessions
         """
-        session = self.session_manager.get_session(step_config.session, session_store)
-        step = StepContext(phase_context_id, step_index, step_config, session)
+        session = self.session_manager.get_session(step_config.session)
+        step = StepContext(phase.id, step_index, step_config, session)
         
         # Start metrics collection for the step
         self.observer_manager.notify(StepStartEvent(step))
@@ -292,6 +354,14 @@ class Playbook:
                 # Execute step directly if no iteration is configured
                 await self._execute_single_step(step)
 
+        except asyncio.CancelledError:
+            self.logger.log_warning(f"Step {step_index} in phase {phase.name} was cancelled")
+            # End step metrics in case of cancellation 
+            try:
+                self.observer_manager.notify(StepEndEvent(step))
+            except Exception:
+                pass
+            raise
         except Exception as e:
             if step.on_error == "ignore":
                 self.logger.log_warning(f"Step failed but continuing: {str(e)}")
@@ -320,15 +390,24 @@ class Playbook:
         # Start metrics collection for the request
         self.observer_manager.notify(RequestStartEvent(request_context))
         
+        # Create task and track it for graceful shutdown
+        task = asyncio.create_task(client.execute_request(HttpRequestSpec(
+            url=step.request.endpoint,
+            method=step.request.method.value,
+            headers=step.request.headers,
+            data=step.request.data,
+            params=step.request.params
+        )))
+        self._running_requests.append(task)
+        
         try:
+            self.logger.log_info(f"Executing request: {step.request.endpoint}")
             # Execute request
-            response = await client.execute_request(HttpRequestSpec(
-                url=step.request.endpoint,
-                method=step.request.method.value,
-                headers=step.request.headers,
-                data=step.request.data,
-                params=step.request.params
-            ))
+            response = await task
+            
+            # Remove from tracking once complete
+            if task in self._running_requests:
+                self._running_requests.remove(task)
 
             # Log response
             self.logger.log_status(response.status)
@@ -349,7 +428,17 @@ class Playbook:
                 body_str = await response.text()
             self.logger.log_body(body_str)
 
+        except asyncio.CancelledError:
+            self.logger.log_warning(f"Request was cancelled")
+            # Clean up the tracking
+            if task in self._running_requests:
+                self._running_requests.remove(task)
+            raise
         except Exception as e:
+            # Clean up the tracking
+            if task in self._running_requests:
+                self._running_requests.remove(task)
+                
             if step.on_error != "ignore":
                 raise
         finally:

@@ -1,0 +1,106 @@
+sessions:
+  test_api:
+    base_url: "https://httpbin.org"
+    retry:
+      max_retries: 3
+      backoff_factor: 1.0
+      max_delay: 10
+      circuit_breaker:
+        threshold: 2
+        reset: 30
+      rate_limit:
+        use_server_retry_delay: true
+        retry_header: "Retry-After"
+
+phases:
+  - name: "Initial Setup"
+    steps:
+      - session: test_api
+        request:
+          method: GET
+          endpoint: "/delay/2"  # Simulate a slow request
+        store:
+          - var: "setup_data"
+            jq: ".headers"
+        retry:
+          max_retries: 2
+          backoff_factor: 1.0
+
+  - name: "Data Collection"
+    parallel: true
+    steps:
+      - session: test_api
+        request:
+          method: GET
+          endpoint: "/delay/3"
+        store:
+          - var: "data1"
+            jq: ".headers"
+        retry:
+          max_retries: 2
+          backoff_factor: 1.0
+
+      - session: test_api
+        request:
+          method: GET
+          endpoint: "/delay/4"
+        store:
+          - var: "data2"
+            jq: ".headers"
+        retry:
+          max_retries: 2
+          backoff_factor: 1.0
+
+  - name: "Data Processing"
+    steps:
+      - session: test_api
+        request:
+          method: POST
+          endpoint: "/delay/2"
+          data:
+            data1: "{{ data1 }}"
+            data2: "{{ data2 }}"
+        store:
+          - var: "processed_data"
+            jq: ".json"
+        retry:
+          max_retries: 2
+          backoff_factor: 1.0
+
+  - name: "Final Steps"
+    parallel: true
+    steps:
+      - session: test_api
+        request:
+          method: GET
+          endpoint: "/delay/3"
+        store:
+          - var: "final_data1"
+            jq: ".headers"
+        retry:
+          max_retries: 2
+          backoff_factor: 1.0
+
+      - session: test_api
+        request:
+          method: GET
+          endpoint: "/delay/4"
+        store:
+          - var: "final_data2"
+            jq: ".headers"
+        retry:
+          max_retries: 2
+          backoff_factor: 1.0
+
+incremental:
+  enabled: true
+  store: file
+  file_path: "checkpoint.json"
+
+metrics:
+  enabled: true
+  collector: json
+  output_file: "metrics.json"
+  verbosity: debug
+
+shutdown_timeout: 5.0  # Give more time for long-running requests to complete 
