@@ -1,33 +1,44 @@
-<!-- ![restbook-logo2](https://github.com/user-attachments/assets/1f22790b-8829-4cae-a33f-3d499cfc1ea3) -->
 <p align="center">
-<!--   <img alt="logo" src="https://github.com/user-attachments/assets/632e61fe-628e-4991-b88c-438cf9509699"> -->
-  <img alt="logo" src="https://github.com/user-attachments/assets/191aa5e8-a672-492f-8596-8ae83ba23706" />
+  <img alt="RestBook logo" src="https://github.com/user-attachments/assets/191aa5e8-a672-492f-8596-8ae83ba23706" />
 </p>
 
-RestBook
+<h1 align="center">RestBook</h1>
+<h3 align="center">Orchestrate long-running API workflows with YAML. No glue code. No retries-by-hand. Just results.</h3>
 
-RestBook is a powerful API request orchestration tool that lets you define and execute complex REST API workflows using declarative YAML playbooks. Unlike API testing tools, RestBook **isn't about testing** endpoints one by one—it's designed to chain together multiple API calls, manage state between requests, and even resume workflows after failures.
+---
 
-## Features
+**RestBook** is an open-source CLI tool for automating complex REST API workflows.
 
-- **YAML-Based Playbooks**: Define your API workflows in simple, readable YAML files
-- **Session Management**: Reuse authenticated sessions across requests with support for environment variables
-- **Parallel Execution**: Run steps and iterations concurrently for improved performance
-- **Response Processing**: Extract and store data from responses using JQ queries
-- **Variable System**: Store and reuse data between steps with Jinja2 templating
-- **Flexible Configuration**: Customize retry policies, SSL verification, and error handling
-- **Comprehensive Logging**: Detailed logging of requests, responses, and operations
-- **CI/CD Ready**: Support for environment variables in configuration
+It’s not an API testing tool. It’s a **resilient API runner** with:
 
-## Installation
+✅ built-in retry logic  
+✅ response storage & variable passing  
+✅ templating with Jinja2  
+✅ checkpointing so you can resume where it failed
+
+If you've ever glued APIs together with bash, Python, or Postman scripts—and hit a flaky request, token expiry, or just forgot where you left off—RestBook is for you.
+
+---
+
+## 🚀 Features
+
+- **📘 Declarative YAML Playbooks** – No need to write code, just describe your flow
+- **🔐 Session Management** – Bearer, Basic, OAuth2, all built in
+- **🔁 Retries, Rate Limits & Circuit Breakers** – Survive flaky APIs like a pro
+- **🧠 Variable System** – Extract data from responses and reuse it anywhere (JQ + Jinja2)
+- **🪄 Resumable Execution** – Automatically pick up from last success (incremental mode)
+- **⚡️ Parallel Execution** – Run iterations concurrently if you want
+- **🔍 Verbose Logging** – Great for debugging or CI/CD visibility
+
+---
+
+## 📦 Installation
 
 ```bash
 pip install restbook
 ```
 
-## Quick Start
-
-Here's a simple example using the Open Library API that you can try right away:
+## 📖 Usage
 
 ```yaml
 sessions:
