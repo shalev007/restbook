@@ -5,6 +5,7 @@
 <h1 align="center">RestBook</h1>
 <h3 align="center">Orchestrate long-running API workflows with YAML. No glue code. No retries-by-hand. Just results.</h3>
 
+---
 
 **RestBook** is an open-source CLI tool for automating complex REST API workflows.
 
@@ -17,6 +18,7 @@ It’s not an API testing tool. It’s a **resilient API runner** with:
 
 If you've ever glued APIs together with bash, Python, or Postman scripts—and hit a flaky request, token expiry, or just forgot where you left off—RestBook is for you.
 
+---
 
 ## 🚀 Features
 
@@ -28,14 +30,13 @@ If you've ever glued APIs together with bash, Python, or Postman scripts—and h
 - **⚡️ Parallel Execution** – Run iterations concurrently if you want
 - **🔍 Verbose Logging** – Great for debugging or CI/CD visibility
 
+---
 
 ## 📦 Installation
 
 ```bash
 pip install restbook
-```
 
-## 📖 Usage
 
 ```yaml
 sessions:
