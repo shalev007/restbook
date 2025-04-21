@@ -41,7 +41,7 @@ class Session:
             await self.authenticator.authenticate()
         except Exception as e:
             self.authenticator.is_authenticated = False
-            raise ValueError(f"Authentication failed: {str(e)}")
+            raise
 
     async def refresh_auth(self) -> None:
         """Refresh authentication if possible."""

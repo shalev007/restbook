@@ -360,7 +360,7 @@ def create_session_commands() -> click.Group:
                                 value = f"{parts[0]} {'*' * 8}"
                         logger.log_info(f"  {key}: {value}")
                 except Exception as e:
-                    logger.log_error(f"\nAuthentication failed: {str(e)}")
+                    logger.log_error(f"Authentication failed: {str(e)}")
 
             # Run the async test
             asyncio.run(test_auth())

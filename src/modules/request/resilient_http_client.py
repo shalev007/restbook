@@ -283,7 +283,7 @@ class ResilientHttpClient:
                 except Exception as err:
                     error_msg = f"Unexpected error: {str(err)}"
                     self._handle_error(error_msg)
-                    raise UnknownError(f"Unexpected error: {str(err)}")
+                    raise UnknownError(error_msg)
 
             error_msg = "Request failed in an unexpected way - reached end of retry loop without success or specific error"
             self._handle_error(error_msg)
@@ -301,7 +301,10 @@ class ResilientHttpClient:
 
         request_headers = {}
         if not self.session.is_authenticated():
-            await self.session.authenticate()
+            try:
+                await self.session.authenticate()
+            except Exception as e:
+                raise AuthenticationError(str(e))
         request_headers = self.session.get_headers()
         if request_spec.headers:
             request_headers.update(request_spec.headers)

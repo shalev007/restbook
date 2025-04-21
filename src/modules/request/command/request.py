@@ -110,7 +110,7 @@ class RequestCommand:
             The response from the API
         """
         # Log request details
-        self.logger.log_info(f"\nRequest Details:")
+        self.logger.log_info(f"Request Details:")
         self.logger.log_info(f"Method: {method}")
         self.logger.log_info(f"Endpoint: {endpoint}")
         if headers:
@@ -137,25 +137,20 @@ class RequestCommand:
             logger=self.logger
         )
         
-        try:
-            # Execute request
-            response = await executor.execute_request(
-                HttpRequestSpec(
-                    method=method,
-                    url=endpoint,
-                    data=data,
-                    headers=headers
-                )
+        # Execute request
+        response = await executor.execute_request(
+            HttpRequestSpec(
+                method=method,
+                url=endpoint,
+                data=data,
+                headers=headers
             )
+        )
 
-            # Log response
-            await self._log_response(response)
-                
-            return response
-        except Exception as e:
-            self.logger.log_error(f"\nRequest failed with error: {str(e)}")
-            self.logger.log_error("Request details were logged above")
-            raise
+        # Log response
+        await self._log_response(response)
+            
+        return response
     
     async def _log_response(self, response):
         """Log the response details."""
@@ -240,13 +235,16 @@ class RequestCommand:
                 return
         
         # Execute request
-        asyncio.run(self.execute_request(
-            session=session,
-            method=method,
-            endpoint=endpoint,
-            data=parsed_data,
-            headers=parsed_headers
-        ))
+        try:
+            asyncio.run(self.execute_request(
+                session=session,
+                method=method,
+                endpoint=endpoint,
+                data=parsed_data,
+                headers=parsed_headers
+            ))
+        except Exception as e:
+            self.logger.log_error(f"Request failed with error: {str(e)}")
     
     def run_interactive_mode(self, session: Session):
         """Run the command in interactive mode."""
