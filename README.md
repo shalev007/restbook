@@ -36,7 +36,9 @@ If you've ever glued APIs together with bash, Python, or Postman scripts—and h
 
 ```bash
 pip install restbook
+```
 
+## 📖 Usage
 
 ```yaml
 sessions:
