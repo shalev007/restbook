@@ -61,6 +61,11 @@ class CheckpointManager:
         if not self.checkpoint_store or not self.content_hash:
             return
             
+        # Don't save checkpoint if we're at the very first step
+        if phase_index == 0 and step_index == 0:
+            self.logger.log_info("Skipping checkpoint save for first step")
+            return
+            
         try:
             checkpoint = CheckpointData(
                 current_phase=phase_index,

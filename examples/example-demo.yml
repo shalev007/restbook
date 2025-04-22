@@ -1,0 +1,47 @@
+# Enable incremental mode so workflow progress is saved to disk
+# If a step fails, it can resume from the last successful step
+incremental:
+  enabled: true
+  store: file
+  file_path: .restbook-checkpoint.json
+
+# Define an API session pointing to httpstat.us (used to simulate flaky responses)
+sessions:
+  httpstat:
+    base_url: https://httpstat.us
+
+phases:
+  - name: "Simulate Failure and Recover"
+    steps:
+      # Step 1: Simulate a failing endpoint (503)
+      # - This step retries up to 3 times
+      # - If it fails 2+ times, the circuit breaker trips
+      - session: httpstat
+        request:
+          method: GET
+          endpoint: "/503?sleep=3000"  # Simulate 503 after 3s delay
+          headers:
+            Accept: "application/json"
+        retry:
+          max_retries: 3
+          backoff_factor: 1
+          circuit_breaker:
+            threshold: 2
+            reset: 5
+        on_error: abort
+        timeout: 5
+        store:
+          # Will store the full JSON response for use in later steps
+          # For more information on storing variables, see:
+          # https://shalev007.github.io/restbook/playbook-structure/
+          - var: "flaky_result" 
+
+      # Step 2: A normal request (200 OK)
+      # This step only runs if Step 1 eventually succeeds
+      # (If you re-run after fixing step 1, execution will resume here)
+      - session: httpstat
+        request:
+          method: GET
+          endpoint: "/200"
+          headers:
+            Accept: "application/json"

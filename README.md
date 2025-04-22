@@ -1,75 +1,111 @@
-<!-- ![restbook-logo2](https://github.com/user-attachments/assets/1f22790b-8829-4cae-a33f-3d499cfc1ea3) -->
 <p align="center">
-<!--   <img alt="logo" src="https://github.com/user-attachments/assets/632e61fe-628e-4991-b88c-438cf9509699"> -->
-  <img alt="logo" src="https://github.com/user-attachments/assets/191aa5e8-a672-492f-8596-8ae83ba23706" />
+  <img alt="RestBook logo" src="https://github.com/user-attachments/assets/191aa5e8-a672-492f-8596-8ae83ba23706" />
 </p>
 
-RestBook
+<h1 align="center">RestBook</h1>
+<h3 align="center">Orchestrate long-running API workflows with YAML. No glue code. No retries-by-hand. Just results.</h3>
 
-RestBook is a powerful API request orchestration tool that lets you define and execute complex REST API workflows using declarative YAML playbooks. Unlike API testing tools, RestBook **isn't about testing** endpoints one by one—it's designed to chain together multiple API calls, manage state between requests, and even resume workflows after failures.
+---
 
-## Features
+**RestBook** is an open-source CLI tool for automating complex REST API workflows.
 
-- **YAML-Based Playbooks**: Define your API workflows in simple, readable YAML files
-- **Session Management**: Reuse authenticated sessions across requests with support for environment variables
-- **Parallel Execution**: Run steps and iterations concurrently for improved performance
-- **Response Processing**: Extract and store data from responses using JQ queries
-- **Variable System**: Store and reuse data between steps with Jinja2 templating
-- **Flexible Configuration**: Customize retry policies, SSL verification, and error handling
-- **Comprehensive Logging**: Detailed logging of requests, responses, and operations
-- **CI/CD Ready**: Support for environment variables in configuration
+It’s not an API testing tool. It’s a **resilient API runner** with:
 
-## Installation
+✅ built-in retry logic  
+✅ response storage & variable passing  
+✅ templating with Jinja2  
+✅ checkpointing so you can resume where it failed
+
+If you've ever glued APIs together with bash, Python, or Postman scripts—and hit a flaky request, token expiry, or just forgot where you left off—RestBook is for you.
+
+---
+
+## 🚀 Features
+
+- **📘 Declarative YAML Playbooks** – No need to write code, just describe your flow
+- **🔐 Session Management** – Bearer, Basic, OAuth2, all built in
+- **🔁 Retries, Rate Limits & Circuit Breakers** – Survive flaky APIs like a pro
+- **🧠 Variable System** – Extract data from responses and reuse it anywhere (JQ + Jinja2)
+- **🪄 Resumable Execution** – Automatically pick up from last success (incremental mode)
+- **⚡️ Parallel Execution** – Run iterations concurrently if you want
+- **🔍 Verbose Logging** – Great for debugging or CI/CD visibility
+
+---
+
+<p align="center">
+  <img src="assets/demo.gif" alt="RestBook retry and checkpointing demo" width="800" />
+</p>
+
+## 📦 Installation
 
 ```bash
 pip install restbook
 ```
 
-## Quick Start
-
-Here's a simple example using the Open Library API that you can try right away:
+## ⚡️ Getting started
 
 ```yaml
+# Enable incremental mode so workflow progress is saved to disk
+# If a step fails, it can resume from the last successful step
+incremental:
+  enabled: true
+  store: file
+  file_path: .restbook-checkpoint.json
+
+# Define an API session pointing to httpstat.us (used to simulate flaky responses)
 sessions:
-  openlibrary:
-    base_url: "https://openlibrary.org"
+  httpstat:
+    base_url: https://httpstat.us
 
 phases:
-  - name: "Book Search"
+  - name: "Simulate Failure and Recover"
     steps:
-      # Search for books by title
-      - session: "openlibrary"
+      # Step 1: Simulate a failing endpoint (503)
+      # - This step retries up to 3 times
+      # - If it fails 2+ times, the circuit breaker trips
+      - session: httpstat
         request:
           method: GET
-          endpoint: "/search.json"
-          params:
-            q: "the lord of the rings"
-            limit: 5
+          endpoint: "/503?sleep=3000"  # Simulate 503 after 3s delay
+          headers:
+            Accept: "application/json"
+        retry:
+          max_retries: 3
+          backoff_factor: 1
+          circuit_breaker:
+            threshold: 2
+            reset: 5
+        on_error: abort
+        timeout: 5
         store:
-          - var: "search_results"
-            jq: ".docs"
+          # Will store the full JSON response for use in later steps
+          # For more information on storing variables, see:
+          # https://shalev007.github.io/restbook/playbook-structure/
+          - var: "flaky_result" 
 
-      # Get details of first book
-      - session: "openlibrary"
+      # Step 2: A normal request (200 OK)
+      # This step only runs if Step 1 eventually succeeds
+      # (If you re-run after fixing step 1, execution will resume here)
+      - session: httpstat
         request:
           method: GET
-          endpoint: "{{ search_results[0].key }}.json"
-        store:
-          - var: "book_details"
-            jq: "."
+          endpoint: "/200"
+          headers:
+            Accept: "application/json"
 ```
 
-Save this as `books.yml` and run it with:
+Save this as `httpstat.yml` and run it with:
 ```bash
-restbook playbook run books.yml
+restbook playbook run httpstat.yml
 ```
 
-This example:
-1. Searches for "The Lord of the Rings" books
-2. Gets detailed information about the first result
-3. Stores both the search results and book details
+This example simulates a flaky API using [httpstat.us](https://httpstat.us), and shows how RestBook:
+- retries on failure
+- respects timeout settings
+- applies a circuit breaker
+- resumes from a checkpoint when re-run
 
-## Documentation
+## 📖 Documentation
 
 For detailed documentation, including:
 - Getting started guide
@@ -80,10 +116,16 @@ For detailed documentation, including:
 
 Visit our [documentation site](https://shalev007.github.io/restbook/).
 
+## 💬 Feedback
+
+Have ideas, questions, or want to share a use case?
+
+Open a [GitHub Issue](https://github.com/shalev007/restbook/issues) 
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-[License Type] - MIT
+MIT License
