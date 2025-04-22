@@ -1,0 +1,37 @@
+incremental:
+  enabled: true
+  store: file
+  file_path: .restbook-checkpoint.json
+
+sessions:
+  httpstat:
+    base_url: https://httpstat.us
+
+phases:
+  - name: "Simulate Failure and Recover"
+    steps:
+      - session: httpstat
+        request:
+          method: GET
+          endpoint: "/200?sleep=3000"
+          headers:
+            Accept: "application/json"
+        retry:
+          max_retries: 3
+          backoff_factor: 1
+          circuit_breaker:
+            threshold: 2
+            reset: 5
+        on_error: abort
+        timeout: 5
+        store:
+          - var: "flaky_result"
+
+      - session: httpstat
+        request:
+          method: GET
+          endpoint: "/200"
+          headers:
+            Accept: "application/json"
+        store:
+          - var: "final_result"

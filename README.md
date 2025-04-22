@@ -32,6 +32,10 @@ If you've ever glued APIs together with bash, Python, or Postman scripts—and h
 
 ---
 
+<p align="center">
+  <img src="assets/demo.gif" alt="RestBook retry and checkpointing demo" width="600" />
+</p>
+
 ## 📦 Installation
 
 ```bash
