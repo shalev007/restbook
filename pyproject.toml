@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "restbook"
-version = "0.3.8"
+version = "0.3.9"
 description = "simple rest api for testing"
 authors = ["Shalev Avhar <shalev1994avhar@gmail.com>"]
 packages = [
