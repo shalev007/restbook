@@ -118,9 +118,9 @@ Visit our [documentation site](https://shalev007.github.io/restbook/).
 
 ## 💬 Feedback
 
-Have questions, ideas, or bugs to report?  
-File an [Issue](https://github.com/shalev007/restbook/issues).
-We’d love to hear what workflows you’re automating!
+Have ideas, questions, or want to share a use case?
+
+Open a [GitHub Issue](https://github.com/shalev007/restbook/issues) 
 
 ## Contributing
 
