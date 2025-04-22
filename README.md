@@ -42,7 +42,7 @@ If you've ever glued APIs together with bash, Python, or Postman scripts—and h
 pip install restbook
 ```
 
-## 📖 Getting started
+## ⚡️ Getting started
 
 ```yaml
 # Enable incremental mode so workflow progress is saved to disk
@@ -105,7 +105,7 @@ This example simulates a flaky API using [httpstat.us](https://httpstat.us), and
 - applies a circuit breaker
 - resumes from a checkpoint when re-run
 
-## Documentation
+## 📖 Documentation
 
 For detailed documentation, including:
 - Getting started guide
