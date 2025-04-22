@@ -42,47 +42,58 @@ If you've ever glued APIs together with bash, Python, or Postman scripts—and h
 pip install restbook
 ```
 
-## 📖 Usage
+## 📖 Getting started
 
 ```yaml
+incremental:
+  enabled: true
+  store: file
+  file_path: .restbook-checkpoint.json
+
 sessions:
-  openlibrary:
-    base_url: "https://openlibrary.org"
+  httpstat:
+    base_url: https://httpstat.us
 
 phases:
-  - name: "Book Search"
+  - name: "Simulate Failure and Recover"
     steps:
-      # Search for books by title
-      - session: "openlibrary"
+      - session: httpstat
         request:
           method: GET
-          endpoint: "/search.json"
-          params:
-            q: "the lord of the rings"
-            limit: 5
+          endpoint: "/503?sleep=3000"
+          headers:
+            Accept: "application/json"
+        retry:
+          max_retries: 3
+          backoff_factor: 1
+          circuit_breaker:
+            threshold: 2
+            reset: 5
+        on_error: abort
+        timeout: 5
         store:
-          - var: "search_results"
-            jq: ".docs"
+          - var: "flaky_result"
 
-      # Get details of first book
-      - session: "openlibrary"
+      - session: httpstat
         request:
           method: GET
-          endpoint: "{{ search_results[0].key }}.json"
+          endpoint: "/200"
+          headers:
+            Accept: "application/json"
         store:
-          - var: "book_details"
-            jq: "."
+          - var: "final_result"
 ```
 
-Save this as `books.yml` and run it with:
+Save this as `httpstat.yml` and run it with:
 ```bash
-restbook playbook run books.yml
+restbook playbook run httpstat.yml
 ```
 
-This example:
-1. Searches for "The Lord of the Rings" books
-2. Gets detailed information about the first result
-3. Stores both the search results and book details
+This example simulates a flaky API using [httpstat.us](https://httpstat.us), and shows how RestBook:
+- retries on failure
+- respects timeout settings
+- applies a circuit breaker
+- resumes from a checkpoint when re-run
 
 ## Documentation
 
@@ -95,10 +106,16 @@ For detailed documentation, including:
 
 Visit our [documentation site](https://shalev007.github.io/restbook/).
 
+## 💬 Feedback
+
+Have questions, ideas, or bugs to report?  
+Open a [GitHub Discussion](https://github.com/shalev007/restbook/discussions) or file an [Issue](https://github.com/shalev007/restbook/issues).  
+We’d love to hear what workflows you’re automating!
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-[License Type] - MIT
+MIT License

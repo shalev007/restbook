@@ -13,7 +13,7 @@ phases:
       - session: httpstat
         request:
           method: GET
-          endpoint: "/200?sleep=3000"
+          endpoint: "/503?sleep=3000"
           headers:
             Accept: "application/json"
         retry:
